@@ -24,12 +24,11 @@ make run-editor ARGS=notes.txt
 tlua dist/editor.ztl notes.txt
 ```
 
-The apps need tlua 0.5.0 or later built with the GUI, and microword a tlua
-with the `markdown` modules (the one after 0.5.2), which read, lay out and
-draw its documents as tlua's MarkdownView does; microsheets needs a Canvas
-that draws bold and italic (`g:font(name, size, "bold italic")`), and also
-saves charts with `canvas:snapshot` (`make build` in tlua;
-`make static` has no GUI). Pixel uses its `png` module and sharp scaling,
+The apps need tlua 0.5.3 or later, built with the GUI (`make build` in
+tlua; `make static` has no GUI). Microword reads, lays out and draws its
+documents with tlua's `markdown` modules, as its MarkdownView does, in bold
+and italic (`g:font(name, size, "bold italic")`); microsheets saves charts
+as PNG with `canvas:snapshot`. Pixel uses the `png` module and sharp scaling,
 files its context menus. The Makefile uses `../tlua/bin/tlua` when it has been built,
 and `tlua` on PATH otherwise. `make TLUA=/path/to/tlua` picks another.
 
