@@ -1,8 +1,8 @@
 ---@meta
--- What TurboNotes.form.lua has in it, for a language server. Written by tlua
+-- What MicroNotes.form.lua has in it, for a language server. Written by tlua
 -- design each time the form is saved; changing it here changes nothing.
 
----@class forms.TurboNotes: gui.Form
+---@class forms.MicroNotes: gui.Form
 ---@field Menu1 gui.Menu
 ---@field cmdEdit gui.Button
 ---@field cmdNewFolder gui.Button

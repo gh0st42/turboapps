@@ -1,4 +1,4 @@
--- The code behind TurboNotes.form.lua: the controls are fields of the form,
+-- The code behind MicroNotes.form.lua: the controls are fields of the form,
 -- by the names the layout gives them.
 --
 -- The notes are in treNotes on the left, the one open on the right, shown
@@ -13,7 +13,7 @@ local md = require "markdown"
 local notebook = require "notebook"
 local picker = require "forms.LinkPicker"
 
-local frm = gui.load "TurboNotes" --[[@as forms.TurboNotes]]
+local frm = gui.load "MicroNotes" --[[@as forms.MicroNotes]]
 local edit, view, source, tree = frm.edNote, frm.vwNote, frm.txtSource, frm.treNotes
 
 local nb             -- the notebook
@@ -36,7 +36,7 @@ local function bookName()
 end
 
 local function updateTitle()
-  frm.caption = (nb.dirty and "• " or "") .. bookName() .. " - turbonotes"
+  frm.caption = (nb.dirty and "• " or "") .. bookName() .. " - micronotes"
 end
 
 local function updateStatus(note)
@@ -148,13 +148,31 @@ local function setMode(m)
   focusView()
 end
 
+-- openFound opens a note found by searching to read, not to edit, and
+-- leaves the keyboard where it is: Enter pressed again in the search box
+-- cannot type into the note. The view the user picked is kept for next time.
+local function openFound(p)
+  if mode ~= "read" then
+    flush()
+    mode = "read"
+    if p == current then show() end
+  end
+  if p ~= current then
+    flush()
+    current = p
+    nb.open = p
+    show()
+    updateTree()
+  end
+end
+
 ---------------------------------------------------------------- saving
 
 local function saveTo(file)
   flush()
   local ok, err = nb:save(file)
   if not ok then
-    gui.msgbox("Could not save " .. file .. ":\n" .. tostring(err), "ok", "turbonotes")
+    gui.msgbox("Could not save " .. file .. ":\n" .. tostring(err), "ok", "micronotes")
     return false
   end
   path = file
@@ -196,7 +214,7 @@ local function confirmDiscard()
   flush()
   if not nb.dirty then return true end
   if path then return saveTo(path) end
-  local answer = gui.msgbox("Do you want to save this notebook?", "yesnocancel", "turbonotes")
+  local answer = gui.msgbox("Do you want to save this notebook?", "yesnocancel", "micronotes")
   if answer == "yes" then return save() end
   return answer == "no"
 end
@@ -222,7 +240,7 @@ end
 local function openPath(file)
   local book, err = notebook.load(file)
   if not book then
-    gui.msgbox("Could not open " .. file .. ":\n" .. tostring(err), "ok", "turbonotes")
+    gui.msgbox("Could not open " .. file .. ":\n" .. tostring(err), "ok", "micronotes")
     return false
   end
   setNotebook(book, file)
@@ -517,7 +535,9 @@ function frm.cmdSource:onClick() setMode("source") end
 function tree:onChange()
   if quiet then return end
   local kind, p = nb:at(self.path)
-  if kind == "note" then
+  if kind == "note" and (frm.txtSearch.text or "") ~= "" then
+    openFound(p)
+  elseif kind == "note" then
     open(p)
   elseif kind == "file" then
     flush()
@@ -568,7 +588,7 @@ end
 function frm.txtSearch:onKey(key)
   if key == "Enter" then
     local found = nb:search(self.text or "")
-    if found[1] then open(found[1]) end
+    if found[1] then openFound(found[1]) end
     return true
   end
   if key == "Escape" then
@@ -683,7 +703,7 @@ local actions = {
     local dir = gui.choosedir { title = "Import a Folder of Notes" }
     if not dir then return end
     local book, err = notebook.importFolder(dir)
-    if not book then gui.msgbox("Could not import " .. dir .. ":\n" .. tostring(err), "ok", "turbonotes") return end
+    if not book then gui.msgbox("Could not import " .. dir .. ":\n" .. tostring(err), "ok", "micronotes") return end
     setNotebook(book, nil)
     nb.dirty = true
     updateTitle()
@@ -693,7 +713,7 @@ local actions = {
     local dir = gui.choosedir { title = "Export the Notes into a Folder" }
     if not dir then return end
     local ok, err = nb:exportFolder(dir)
-    if not ok then gui.msgbox("Could not export:\n" .. tostring(err), "ok", "turbonotes") return end
+    if not ok then gui.msgbox("Could not export:\n" .. tostring(err), "ok", "micronotes") return end
     updateStatus("exported to " .. dir)
   end,
   mnuExit = function() frm:close() end,
@@ -752,10 +772,10 @@ local actions = {
     edit.textSize, view.textSize = settings.textSize, settings.textSize
     notebook.saveSettings(settings)
   end,
-  mnuKeys = function() gui.msgbox(KEYS, "ok", "turbonotes Shortcuts") end,
+  mnuKeys = function() gui.msgbox(KEYS, "ok", "micronotes Shortcuts") end,
   mnuAbout = function()
-    gui.msgbox("turbonotes\n\nNotes in Markdown, linked to each other, kept in one .znb file with their pictures and files.",
-      "ok", "About turbonotes")
+    gui.msgbox("micronotes\n\nNotes in Markdown, linked to each other, kept in one .znb file with their pictures and files.",
+      "ok", "About micronotes")
   end,
 }
 
@@ -788,6 +808,7 @@ frm.saveTo = saveTo
 frm.open = open
 frm.setMode = setMode
 frm.follow = follow
+frm.openFound = openFound
 frm.attach = attach
 frm.actions = actions
 frm.notebook = function() return nb, current, mode end

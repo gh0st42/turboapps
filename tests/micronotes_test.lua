@@ -1,4 +1,4 @@
--- tlua -p apps/turbonotes -p tests tests/turbonotes_test.lua
+-- tlua -p apps/micronotes -p tests tests/micronotes_test.lua
 
 local t = require "testing"
 local notebook = require "notebook"
@@ -178,7 +178,7 @@ end)
 local gui = require "gui"
 gui.msgbox = function() return "no" end
 
-local frm = require "forms.TurboNotes"
+local frm = require "forms.MicroNotes"
 local picker = require "forms.LinkPicker"
 local pickWith -- what the picker answers, in place of asking
 picker.pick = function() return pickWith end
@@ -280,13 +280,35 @@ test("form: pictures and files go in at the caret, and into the notebook", funct
   eq(edit.pictures["attachments/photo.png"].width, 4)
 end)
 
+test("form: a note found by searching opens to read", function()
+  local nb = fresh()
+  local before = nb.notes["Ideas.md"]
+  frm.txtSearch.text = "ideas"
+  frm.txtSearch:fire("onChange")
+  for _ = 1, 3 do frm.txtSearch:fire("onKey", "Enter") end
+  local _, current, mode = frm.notebook()
+  eq(current, "Ideas.md")
+  eq(mode, "read")
+  eq(frm.vwNote.visible, true)
+  eq(nb.notes["Ideas.md"], before)
+  -- Picked in the tree while searching, too.
+  frm.treNotes.path = "Welcome"
+  frm.treNotes:fire("onChange")
+  eq(select(2, frm.notebook()), "Welcome.md")
+  eq(select(3, frm.notebook()), "read")
+  -- The view chosen for editing is kept for next time.
+  eq(notebook.loadSettings().view, "edit")
+  frm.txtSearch:fire("onKey", "Escape")
+  frm.setMode("edit")
+end)
+
 test("form: save, then open again", function()
   local nb = fresh()
   frm.follow("Saved.md")
   local file = root .. "/form.znb"
   ok(frm.saveTo(file))
   ok(not frm.caption:find("^•"), frm.caption)
-  ok(frm.caption:find("^form %- turbonotes"), frm.caption)
+  ok(frm.caption:find("^form %- micronotes"), frm.caption)
   fresh()
   ok(frm.openPath(file))
   local back, current = frm.notebook()
@@ -294,4 +316,4 @@ test("form: save, then open again", function()
   ok(back.notes["Welcome.md"])
 end)
 
-t.done("turbonotes")
+t.done("micronotes")

@@ -463,7 +463,7 @@ local function manifest(self)
   local folders = {}
   for f in pairs(self.folders) do folders[#folders + 1] = quote(f) end
   table.sort(folders)
-  return ('{\n  "app": "turbonotes",\n  "version": 1,\n  "open": %s,\n  "folders": [%s]\n}\n'):format(
+  return ('{\n  "app": "micronotes",\n  "version": 1,\n  "open": %s,\n  "folders": [%s]\n}\n'):format(
     self.open and quote(self.open) or "null", table.concat(folders, ", "))
 end
 
@@ -594,7 +594,7 @@ function M.settingsPath()
   local base = os.getenv("XDG_CONFIG_HOME")
   local home = os.getenv("HOME") or os.getenv("USERPROFILE") or "."
   if package.config:sub(1, 1) == "\\" then base = base or os.getenv("APPDATA") end
-  return (base or (home .. "/.config")) .. "/turboapps/turbonotes.lua"
+  return (base or (home .. "/.config")) .. "/turboapps/micronotes.lua"
 end
 
 M.defaults = { last = "", view = "edit", textSize = 15 }
@@ -623,7 +623,7 @@ function M.saveSettings(s)
   local keys = {}
   for k in pairs(M.defaults) do keys[#keys + 1] = k end
   table.sort(keys)
-  local lines = { "-- turbonotes' settings, written by it.", "return {" }
+  local lines = { "-- micronotes' settings, written by it.", "return {" }
   for _, k in ipairs(keys) do
     local v = s[k]
     lines[#lines + 1] = ("  %s = %s,"):format(k, type(v) == "string" and ("%q"):format(v) or tostring(v))
