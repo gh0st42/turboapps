@@ -597,7 +597,7 @@ function M.settingsPath()
   return (base or (home .. "/.config")) .. "/turboapps/micronotes.lua"
 end
 
-M.defaults = { last = "", view = "edit", textSize = 15 }
+M.defaults = { last = "", textSize = 15 }
 
 function M.loadSettings()
   local s = {}

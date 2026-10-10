@@ -19,7 +19,7 @@ local edit, view, source, tree = frm.edNote, frm.vwNote, frm.txtSource, frm.treN
 local nb             -- the notebook
 local path           -- its .znb, or nil before it is saved
 local current        -- the note open, by its path in the notebook
-local mode = "edit"  -- "edit", "read" or "source"
+local mode = "read"  -- "edit", "read" or "source": it starts reading
 local openFolders = {}
 local settings = notebook.loadSettings()
 local editorChanged = false -- edNote has changes not yet in the notebook
@@ -142,15 +142,13 @@ local function setMode(m)
   if m == mode then return end
   flush()
   mode = m
-  settings.view = m
-  notebook.saveSettings(settings)
   show()
   focusView()
 end
 
 -- openFound opens a note found by searching to read, not to edit, and
 -- leaves the keyboard where it is: Enter pressed again in the search box
--- cannot type into the note. The view the user picked is kept for next time.
+-- cannot type into the note.
 local function openFound(p)
   if mode ~= "read" then
     flush()
@@ -511,7 +509,28 @@ function source:onChange()
   changed()
 end
 
+-- NOTE is how a node dragged out of the tree is carried: its tree path.
+local NOTE = "micronotes:"
+
 local function dropped(_, text, lines)
+  -- A note dragged from the tree onto the note open is a link to it.
+  local carried = text and text:sub(1, #NOTE) == NOTE and text:sub(#NOTE + 1)
+  if carried then
+    local kind, p = nb:at(carried)
+    if not kind or kind == "folder" or not current or p == current then return end
+    if mode == "read" then setMode("edit") end
+    if kind == "note" then
+      local title = notebook.title(p)
+      if mode == "source" then source:insert("[[" .. title .. "]]")
+      else edit.ed:insertRuns({ wikiRun(title) }, "link") edit.ed.pending = {} edit:changed() end
+    else
+      local src = p:gsub(" ", "%%20")
+      if mode == "source" then source:insert(("[%s](%s)"):format(notebook.basename(p), src))
+      elseif notebook.isPicture(p) then edit.ed:insertImage(src, notebook.basename(p)) edit:changed()
+      else edit.ed:insertRuns({ { text = notebook.basename(p), link = src } }, "link") edit.ed.pending = {} edit:changed() end
+    end
+    return
+  end
   local files = {}
   for _, l in ipairs(lines or {}) do
     if lfs.attributes(l, "mode") == "file" then files[#files + 1] = l end
@@ -565,6 +584,75 @@ function tree:onChange()
     items[#items + 1] = { "&Delete", function() delete() end }
   end
   self.contextMenu = items
+end
+
+-- A node of the tree is dragged by its path, to drop on a folder (or a
+-- note, for its folder) to move it there, or on the note open to link it.
+function tree:onDrag()
+  local p = self.path
+  if p and p ~= "" and nb:at(p) then return NOTE .. p end
+end
+
+-- moveInto moves what tree path from names into folder dir ("" for the
+-- top), keeping links working; nil and why when it cannot go there.
+local function moveInto(from, dir)
+  local kind, p = nb:at(from)
+  if not kind then return nil end
+  local name = kind == "note" and notebook.title(p) or notebook.basename(p)
+  if notebook.dirname(p) == dir then return nil end
+  if kind == "folder" and (dir == p or dir:sub(1, #p + 1) == p .. "/") then
+    return nil, "A folder cannot go inside itself."
+  end
+  flush()
+  local newPath, err = nb:move(p, notebook.join(dir, name))
+  if not newPath then return nil, err end
+  if current == p then current = newPath
+  elseif kind == "folder" and current and current:sub(1, #p + 1) == p .. "/" then
+    current = newPath .. current:sub(#p + 1)
+  end
+  if dir ~= "" then openFolders[dir] = true end
+  changed()
+  show()
+  updateTree()
+  return newPath
+end
+
+-- A drop on the tree lands in the folder it is on, or the one of the note
+-- it is on, or at the top below them all: nodes of the tree move there,
+-- and files from elsewhere come in there, Markdown as notes.
+function tree:onDrop(text, lines, x, y, at)
+  local dir = ""
+  if at then
+    local kind, p = nb:at(at)
+    if kind == "folder" then dir = p elseif p then dir = notebook.dirname(p) end
+  end
+  if text:sub(1, #NOTE) == NOTE then
+    local _, err = moveInto(text:sub(#NOTE + 1), dir)
+    if err then gui.msgbox(err, "ok", "Move") end
+    return
+  end
+  local added
+  for _, file in ipairs(lines or {}) do
+    if lfs.attributes(file, "mode") == "file" then
+      local f = io.open(file, "rb")
+      local data = f and f:read("*a")
+      if f then f:close() end
+      if data then
+        local name = notebook.basename(file:gsub("\\", "/"))
+        if notebook.isNote(name) then
+          added = nb:createNote(dir, notebook.title(name), data)
+        else
+          local p = nb:free(dir ~= "" and dir or notebook.ATTACHMENTS, (name:gsub("%.[^.]*$", "")), name:match("%.[^.]*$") or "")
+          nb.files[p] = data
+          nb.dirty = true
+        end
+      end
+    end
+  end
+  if dir ~= "" then openFolders[dir] = true end
+  changed()
+  updateTree()
+  if added then open(added) end
 end
 
 function tree:onDoubleClick()
@@ -791,7 +879,6 @@ function frm:onClose()
   if not confirmDiscard() then return false end
 end
 
-mode = (settings.view == "read" or settings.view == "source") and settings.view or "edit"
 edit.textSize, view.textSize = settings.textSize, settings.textSize
 
 -- A notebook named on the command line is opened, or the last one.
@@ -809,6 +896,7 @@ frm.open = open
 frm.setMode = setMode
 frm.follow = follow
 frm.openFound = openFound
+frm.moveInto = moveInto
 frm.attach = attach
 frm.actions = actions
 frm.notebook = function() return nb, current, mode end

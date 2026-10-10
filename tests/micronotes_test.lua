@@ -185,6 +185,12 @@ picker.pick = function() return pickWith end
 
 local edit = frm.edNote
 
+test("form: it starts reading", function()
+  eq(select(3, frm.notebook()), "read")
+  eq(frm.vwNote.visible, true)
+  eq(frm.edNote.visible, false)
+end)
+
 local function keys(s)
   for ch in s:gmatch("[%z\1-\127\194-\244][\128-\191]*") do edit:fire("onKey", ch, ch) end
 end
@@ -296,10 +302,53 @@ test("form: a note found by searching opens to read", function()
   frm.treNotes:fire("onChange")
   eq(select(2, frm.notebook()), "Welcome.md")
   eq(select(3, frm.notebook()), "read")
-  -- The view chosen for editing is kept for next time.
-  eq(notebook.loadSettings().view, "edit")
   frm.txtSearch:fire("onKey", "Escape")
   frm.setMode("edit")
+end)
+
+test("form: notes dragged in the tree move into folders", function()
+  local nb = fresh()
+  local plan = nb:createNote("Work", "Plan", "# Plan\n\nsee [[Ideas]]\n")
+  frm.open("Ideas.md")
+  local tree = frm.treNotes
+  -- Dragged from the tree, a node carries its path.
+  tree.path = "Ideas"
+  local carried = tree:fire("onDrag")
+  eq(carried, "micronotes:Ideas")
+  -- Dropped on a folder, it goes in; links to it still work.
+  tree:fire("onDrop", carried, { carried }, 10, 10, "Work")
+  eq(nb.notes["Work/Ideas.md"] ~= nil, true)
+  eq(nb.notes["Ideas.md"], nil)
+  eq(select(2, frm.notebook()), "Work/Ideas.md")
+  eq(nb:resolve("Ideas", plan), "Work/Ideas.md")
+  -- Dropped on a note, it goes into that note's folder: here the top.
+  tree:fire("onDrop", "micronotes:Work/Ideas", {}, 10, 10, "Welcome")
+  eq(nb.notes["Ideas.md"] ~= nil, true)
+  -- A folder moves with what is in it, but not into itself.
+  nb:createFolder("", "Archive")
+  tree:fire("onDrop", "micronotes:Work", {}, 10, 10, "Archive")
+  eq(nb.notes["Archive/Work/Plan.md"] ~= nil, true)
+  local _, err = frm.moveInto("Archive", "Archive/Work")
+  ok(err and err:find("itself"), tostring(err))
+  -- Below the nodes it goes to the top.
+  tree:fire("onDrop", "micronotes:Archive/Work/Plan", {}, 10, 300, nil)
+  eq(nb.notes["Plan.md"] ~= nil, true)
+  -- Files from elsewhere come in where they land, Markdown as notes.
+  local md = root .. "/Dropped.md"
+  local f = io.open(md, "wb") f:write("# Dropped\n") f:close()
+  tree:fire("onDrop", md .. "\n", { md }, 10, 10, "Archive")
+  eq(nb.notes["Archive/Dropped.md"], "# Dropped\n")
+  eq(select(2, frm.notebook()), "Archive/Dropped.md")
+end)
+
+test("form: a note dropped on the one open is a link to it", function()
+  local nb = fresh()
+  frm.open("Ideas.md")
+  edit.ed:moveToDocument(1)
+  edit:moved()
+  edit:fire("onDrop", "micronotes:Welcome", { "micronotes:Welcome" })
+  frm.flush()
+  ok(nb.notes["Ideas.md"]:find("%[%[Welcome%]%]"), nb.notes["Ideas.md"])
 end)
 
 test("form: save, then open again", function()
