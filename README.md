@@ -8,6 +8,7 @@ on any platform.
 | App | What it is |
 |-----|------------|
 | [calculator](apps/calculator) | A standard calculator: memory, %, √, 1/x, x², a history you can recall from, copy and paste, and the keyboard. |
+| [microreader](apps/microreader) | A notebook from micronotes read as a book or a help file, never changed, as Windows' help and docsets were: contents, an index of every page and heading, a search that ranks the pages, back, forward, home and the pages before and after. A number at the start of a name orders it and is not shown. `tlua microreader.ztl manual.znb "Page#heading"` opens it at a topic, as a program opens its help. |
 | [microsheets](apps/microsheets) | A spreadsheet, like the terminal ones such as [vex](https://github.com/CodeOne45/vex-tui), in a window: formulas (`=SUM(B2:B9)`, 60-odd functions, references across sheets, `$` to fix them), several sheets, undo, copy and paste that moves formulas, fill, sort, filter, find, a frozen header row, column profiles, bar, line, sparkline and pie charts saved as PNG, a formula help with every function's parameters and examples, and themes. Keys work as a spreadsheet's, or as vim's (`hjkl`, `i`, `dd`, `yy`, `p`, `/`, `u`). Workbooks are `.zms` files: a zip of a CSV file of each sheet's values and a JSON file of its formulas. It opens CSV and TSV files too. |
 | [micronotes](apps/micronotes) | Notes like Obsidian's: a tree of notes and folders on the left, the note on the right, read with its links followed (as it starts), edited as it looks, or edited as Markdown source, switched with Cmd+E or the buttons. Notes, files and folders are dragged in the tree into folders, and a note dragged onto the one open links to it. Notes link with `[[Note Name]]` (type `[[` to pick one; a link to a note not there yet makes it), and the notes linking back are listed. Pictures and files dropped on a note go into the notebook. A notebook is one `.znb` file: a zip of the notes as Markdown in their folders, with `attachments/`, saved by itself a moment after each change; folders of notes import and export. |
 | [microword](apps/microword) | A word processor that edits Markdown as it looks: headings, bold, italic, code, links, bullet and numbered lists, quotes, code blocks, rules and pictures, with Markdown shortcuts as you type (`# `, `- `, `1. `, `> `), undo, and the clipboard. Documents are `.zmd` files: a zip of `document.md` and the pictures in `assets/`. It opens `.md` too and exports to it. |
@@ -26,10 +27,10 @@ tlua dist/editor.ztl notes.txt
 ```
 
 The apps need tlua 0.5.3 or later, built with the GUI (`make build` in
-tlua; `make static` has no GUI), and microword and micronotes the tlua after
-it, whose MarkdownEdit edits Markdown as it looks, whose MarkdownView
-takes pictures from the program, and whose drops on a Tree say where
-they landed. Microsheets saves charts as PNG with
+tlua; `make static` has no GUI), and microword, micronotes and microreader the
+tlua after it, whose MarkdownEdit edits Markdown as it looks, whose
+MarkdownView takes pictures from the program, and whose drops on a Tree
+say where they landed. Microsheets saves charts as PNG with
 `canvas:snapshot`. Pixel uses the `png` module and sharp scaling,
 files its context menus. The Makefile uses `../tlua/bin/tlua` when it has been built,
 and `tlua` on PATH otherwise. `make TLUA=/path/to/tlua` picks another.

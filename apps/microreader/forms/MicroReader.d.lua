@@ -1,0 +1,24 @@
+---@meta
+-- What MicroReader.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.MicroReader: gui.Form
+---@field Menu1 gui.Menu
+---@field cmdBack gui.Button
+---@field cmdForward gui.Button
+---@field cmdHome gui.Button
+---@field cmdNext gui.Button
+---@field cmdPrev gui.Button
+---@field lblPage gui.Label
+---@field lblStatus gui.Label
+---@field lstIndex gui.ListBox
+---@field lstResults gui.ListBox
+---@field pgContents gui.Page
+---@field pgIndex gui.Page
+---@field pgSearch gui.Page
+---@field pnlBar gui.Panel
+---@field tabNav gui.Tabs
+---@field treContents gui.Tree
+---@field txtIndex gui.TextBox
+---@field txtSearch gui.TextBox
+---@field vwPage gui.MarkdownView
