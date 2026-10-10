@@ -1,0 +1,14 @@
+---@meta
+-- What Settings.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.Settings: gui.Form
+---@field cboSort gui.ComboBox
+---@field chkConfirm gui.CheckBox
+---@field chkDescending gui.CheckBox
+---@field chkFoldersFirst gui.CheckBox
+---@field chkHidden gui.CheckBox
+---@field cmdCancel gui.Button
+---@field cmdOK gui.Button
+---@field lblSaved gui.Label
+---@field lblSort gui.Label

@@ -1,0 +1,32 @@
+---@meta
+-- What Pixel.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.Pixel: gui.Form
+---@field Menu1 gui.Menu
+---@field cboPalette gui.ComboBox
+---@field chkFilled gui.CheckBox
+---@field cmdBrush gui.Button
+---@field cmdEllipse gui.Button
+---@field cmdEraser gui.Button
+---@field cmdFill gui.Button
+---@field cmdLine gui.Button
+---@field cmdPen gui.Button
+---@field cmdPicker gui.Button
+---@field cmdRect gui.Button
+---@field cmdZoomIn gui.Button
+---@field cmdZoomOut gui.Button
+---@field cnvColors gui.Canvas
+---@field cnvImage gui.Canvas
+---@field cnvPalette gui.Canvas
+---@field cnvPreview gui.Canvas
+---@field lblColors gui.Label
+---@field lblPalette gui.Label
+---@field lblPreview gui.Label
+---@field lblSize gui.Label
+---@field lblStatus gui.Label
+---@field lblZoom gui.Label
+---@field pnlSide gui.Panel
+---@field pnlTools gui.Panel
+---@field scrImage gui.Scroll
+---@field spnSize gui.Spinner

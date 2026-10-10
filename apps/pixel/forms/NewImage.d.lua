@@ -1,0 +1,14 @@
+---@meta
+-- What NewImage.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.NewImage: gui.Form
+---@field cboPalette gui.ComboBox
+---@field chkTransparent gui.CheckBox
+---@field cmdCancel gui.Button
+---@field cmdOK gui.Button
+---@field lblHeight gui.Label
+---@field lblPalette gui.Label
+---@field lblWidth gui.Label
+---@field spnHeight gui.Spinner
+---@field spnWidth gui.Spinner

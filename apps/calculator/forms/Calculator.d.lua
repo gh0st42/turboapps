@@ -1,0 +1,40 @@
+---@meta
+-- What Calculator.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.Calculator: gui.Form
+---@field Menu1 gui.Menu
+---@field cmd0 gui.Button
+---@field cmd1 gui.Button
+---@field cmd2 gui.Button
+---@field cmd3 gui.Button
+---@field cmd4 gui.Button
+---@field cmd5 gui.Button
+---@field cmd6 gui.Button
+---@field cmd7 gui.Button
+---@field cmd8 gui.Button
+---@field cmd9 gui.Button
+---@field cmdAdd gui.Button
+---@field cmdBack gui.Button
+---@field cmdCE gui.Button
+---@field cmdClear gui.Button
+---@field cmdClearHistory gui.Button
+---@field cmdDiv gui.Button
+---@field cmdEquals gui.Button
+---@field cmdInverse gui.Button
+---@field cmdMC gui.Button
+---@field cmdMMinus gui.Button
+---@field cmdMPlus gui.Button
+---@field cmdMR gui.Button
+---@field cmdMul gui.Button
+---@field cmdNegate gui.Button
+---@field cmdPercent gui.Button
+---@field cmdPoint gui.Button
+---@field cmdSqrt gui.Button
+---@field cmdSquare gui.Button
+---@field cmdSub gui.Button
+---@field lblDisplay gui.Label
+---@field lblExpr gui.Label
+---@field lblHistory gui.Label
+---@field lblMemory gui.Label
+---@field lstHistory gui.ListBox

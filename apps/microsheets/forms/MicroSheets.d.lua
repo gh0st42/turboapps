@@ -1,0 +1,15 @@
+---@meta
+-- What MicroSheets.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.MicroSheets: gui.Form
+---@field Menu1 gui.Menu
+---@field grdSheet gui.Object
+---@field lblFx gui.Label
+---@field lblMode gui.Label
+---@field lblStatus gui.Label
+---@field pnlBar gui.Panel
+---@field pnlStatus gui.Panel
+---@field tabSheets gui.Object
+---@field txtCell gui.TextBox
+---@field txtFormula gui.TextBox

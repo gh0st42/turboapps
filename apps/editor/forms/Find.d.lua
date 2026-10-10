@@ -1,0 +1,17 @@
+---@meta
+-- What Find.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.Find: gui.Form
+---@field chkCase gui.CheckBox
+---@field chkWrap gui.CheckBox
+---@field cmdClose gui.Button
+---@field cmdFindNext gui.Button
+---@field cmdFindPrev gui.Button
+---@field cmdReplace gui.Button
+---@field cmdReplaceAll gui.Button
+---@field lblFind gui.Label
+---@field lblReplace gui.Label
+---@field lblResult gui.Label
+---@field txtFind gui.TextBox
+---@field txtReplace gui.TextBox

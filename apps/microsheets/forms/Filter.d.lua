@@ -1,0 +1,12 @@
+---@meta
+-- What Filter.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.Filter: gui.Form
+---@field chkAll gui.CheckBox
+---@field cmdCancel gui.Button
+---@field cmdClear gui.Button
+---@field cmdOK gui.Button
+---@field lblHint gui.Label
+---@field lblPrompt gui.Label
+---@field txtExpr gui.TextBox

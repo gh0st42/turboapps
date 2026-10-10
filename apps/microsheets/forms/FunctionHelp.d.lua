@@ -1,0 +1,11 @@
+---@meta
+-- What FunctionHelp.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.FunctionHelp: gui.Form
+---@field cmdClose gui.Button
+---@field cmdInsert gui.Button
+---@field lblHint gui.Label
+---@field treTopics gui.Tree
+---@field txtPage gui.TextBox
+---@field txtSearch gui.TextBox

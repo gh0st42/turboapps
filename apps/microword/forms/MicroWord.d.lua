@@ -1,0 +1,20 @@
+---@meta
+-- What MicroWord.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.MicroWord: gui.Form
+---@field Menu1 gui.Menu
+---@field cboStyle gui.ComboBox
+---@field cmdBold gui.Button
+---@field cmdBullets gui.Button
+---@field cmdCode gui.Button
+---@field cmdImage gui.Button
+---@field cmdItalic gui.Button
+---@field cmdLink gui.Button
+---@field cmdNumbers gui.Button
+---@field cmdQuote gui.Button
+---@field cmdRedo gui.Button
+---@field cmdRule gui.Button
+---@field cmdUndo gui.Button
+---@field edDoc gui.Object
+---@field lblStatus gui.Label

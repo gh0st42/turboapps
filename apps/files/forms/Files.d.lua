@@ -1,0 +1,14 @@
+---@meta
+-- What Files.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.Files: gui.Form
+---@field Menu1 gui.Menu
+---@field cmdBack gui.Button
+---@field cmdForward gui.Button
+---@field cmdHome gui.Button
+---@field cmdUp gui.Button
+---@field lblStatus gui.Label
+---@field lstFiles gui.Object
+---@field lstPlaces gui.ListBox
+---@field txtPath gui.TextBox
