@@ -1,9 +1,10 @@
 -- The code behind MicroWord.form.lua: the controls are fields of the form,
 -- by the names the layout gives them.
 --
--- edDoc is a RichEdit, a control of this project's own (controls/), which
--- draws the document and takes the keyboard and the mouse. This file is
--- the rest: the menus, the toolbar, files, pictures and the clipboard.
+-- edDoc is tlua's MarkdownEdit, which draws the document and takes the
+-- keyboard and the mouse; edDoc.ed is its markdown.editor, and
+-- edDoc.pictures the document's pictures. This file is the rest: the
+-- menus, the toolbar, files, pictures and the clipboard.
 
 local gui = require "gui"
 local lfs = require "lfs"
@@ -101,7 +102,7 @@ end
 
 local function saveTo(file)
   if zmd.extension(file) ~= "zmd" then file = file .. ".zmd" end
-  local ok, err = zmd.save(file, ed().blocks, edit.assets)
+  local ok, err = zmd.save(file, ed().blocks, edit.pictures)
   if not ok then
     gui.msgbox(("Cannot save %s.\n\n%s"):format(file, tostring(err)), "ok", "microword")
     return false
@@ -146,7 +147,7 @@ local function exportMarkdown()
   local file = gui.savefile { title = "Export Markdown", filter = "Markdown\t*.md", file = base .. ".md" }
   if not file then return end
   if zmd.extension(file) ~= "md" then file = file .. ".md" end
-  local ok, err = zmd.exportMarkdown(file, ed().blocks, edit.assets)
+  local ok, err = zmd.exportMarkdown(file, ed().blocks, edit.pictures)
   if not ok then
     gui.msgbox(("Cannot export %s.\n\n%s"):format(file, tostring(err)), "ok", "microword")
   else
@@ -168,8 +169,8 @@ local function addPicture(file)
     gui.msgbox(("Cannot use %s as a picture.\n\n%s"):format(file, tostring(err or "it cannot be read")), "ok", "microword")
     return false
   end
-  local name = zmd.uniqueName(edit.assets, file)
-  edit.assets[name] = asset
+  local name = zmd.uniqueName(edit.pictures, file)
+  edit.pictures[name] = asset
   local alt = zmd.basename(file):gsub("%.[^.]*$", "")
   change(function(e) e:insertImage(name, alt) end)
   return true

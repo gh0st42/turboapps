@@ -16,5 +16,5 @@
 ---@field cmdRedo gui.Button
 ---@field cmdRule gui.Button
 ---@field cmdUndo gui.Button
----@field edDoc gui.Object
+---@field edDoc gui.MarkdownEdit
 ---@field lblStatus gui.Label

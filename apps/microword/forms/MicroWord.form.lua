@@ -13,6 +13,6 @@ return { kind = "Form", name = "MicroWord", caption = "Untitled - microword", wi
   { kind = "Button", name = "cmdQuote", left = 448, top = 31, width = 32, height = 28, image = "../images/quote.svg", tooltip = "Quote (Cmd+Shift+Q)" },
   { kind = "Button", name = "cmdImage", left = 492, top = 31, width = 32, height = 28, image = "../images/image.svg", tooltip = "Insert a picture (Cmd+Shift+I)" },
   { kind = "Button", name = "cmdRule", left = 526, top = 31, width = 32, height = 28, image = "../images/rule.svg", tooltip = "Insert a horizontal rule" },
-  { kind = "RichEdit", name = "edDoc", left = 0, top = 64, width = 900, height = 592, grow = true, tabIndex = 1 },
+  { kind = "MarkdownEdit", name = "edDoc", left = 0, top = 64, width = 900, height = 592, grow = true, paper = true, tabIndex = 1 },
   { kind = "Label", name = "lblStatus", caption = "", left = 0, top = 656, width = 900, height = 24, color = "#ececec", textColor = "#404040" },
 }

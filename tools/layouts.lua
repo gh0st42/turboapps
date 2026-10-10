@@ -50,7 +50,7 @@ local kinds = gui.kinds()
 
 local function classOf(kind)
   local info = kinds[kind]
-  if info and not info.defined then return "gui." .. kind end
+  if info and (not info.defined or info.builtin) then return "gui." .. kind end
   return "gui.Object"
 end
 
