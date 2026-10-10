@@ -104,6 +104,16 @@ test("form: the style box and list keys", function()
   eq(frm.cboStyle.selected, 7)
 end)
 
+test("form: a table of contents goes in, and its links go to the headings", function()
+  edit:load("# One\n\nsome text\n\n## Two\n\nmore\n")
+  frm.actions.mnuToc()
+  eq(edit:markdown(), "[[toc]]\n\n# One\n\nsome text\n\n## Two\n\nmore\n")
+  -- A link to a heading is the editor's, not the system's to open.
+  eq(edit:fire("onLink", "#two"), false)
+  ok(edit:scrollTo("#two"))
+  eq(edit.ed.caret.b, 4)
+end)
+
 test("form: save, then open again", function()
   local file = root .. "/form.zmd"
   ok(frm.saveTo(file), "saved")

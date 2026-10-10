@@ -342,6 +342,8 @@ end
 -- follow goes where a link leads: a note (made if it is not there yet), a
 -- file of the notebook's, or a web address.
 local function follow(url)
+  -- A link to a heading of the note shown is the view's to go to.
+  if url:match("^#") then return false end
   local target = notebook.linkTarget(url)
   if target then
     local p = nb:resolve(target, current)
@@ -362,7 +364,7 @@ local function follow(url)
   return true
 end
 
-function edit:onLink(url) follow(url) end
+function edit:onLink(url) return follow(url) end
 function view:onLink(url) return follow(url) end
 
 function edit:onHover(url) updateStatus(url and ("Cmd-click to open " .. url) or nil) end
@@ -498,7 +500,9 @@ function edit:onMenu()
   }
   if url then
     items[#items + 1] = "-"
-    items[#items + 1] = { "&Open Link", function() follow(url) end }
+    items[#items + 1] = { "&Open Link", function()
+      if url:match("^#") then edit:scrollTo(url) else follow(url) end
+    end }
     items[#items + 1] = { "&Remove Link", function() ed:setLink("") edit:changed() end }
   end
   gui.popup(items, frm)

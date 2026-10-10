@@ -198,8 +198,11 @@ local function openLink(url)
   pcall(gui.spawn, cmd)
 end
 
+-- A link to a heading of the document is the editor's to go to.
 function edit:onLink(url)
+  if url:match("^#") then return false end
   openLink(url)
+  return true
 end
 
 ---------------------------------------------------------------- the clipboard
@@ -241,6 +244,7 @@ Shift+Enter starts a new line in the same paragraph.
 
 Cmd+B, Cmd+I, Cmd+E    bold, italic, code
 Cmd+K                  a link; Cmd-click one to open it
+Insert > Table of Contents   the headings, each a link: Cmd-click one to go there
 Cmd+0 to Cmd+3         normal text, headings
 Cmd+U                  the Markdown the document is kept as
 
@@ -263,6 +267,8 @@ local actions = {
   mnuImage = insertPicture,
   mnuLink = editLink,
   mnuRule = function() change(function(e) e:insertRule() end) end,
+  -- A table of contents lists the headings, each a link to its heading.
+  mnuToc = function() change(function(e) e:insertBlock { type = "toc" } end) end,
   mnuBold = function() change(function(e) e:toggle("b") end) end,
   mnuItalic = function() change(function(e) e:toggle("i") end) end,
   mnuCode = function() change(function(e) e:toggle("code") end) end,
@@ -318,7 +324,9 @@ function edit:onMenu()
   }
   local url = e:linkAt()
   if url then
-    items[#items + 1] = { "&Open Link", function() openLink(url) end }
+    items[#items + 1] = { "&Open Link", function()
+      if url:match("^#") then edit:scrollTo(url) else openLink(url) end
+    end }
     items[#items + 1] = { "&Remove Link", function() change(function(x) x:setLink("") end) end }
   end
   gui.popup(items, frm)
