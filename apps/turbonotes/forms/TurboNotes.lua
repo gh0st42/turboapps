@@ -1,0 +1,796 @@
+-- The code behind TurboNotes.form.lua: the controls are fields of the form,
+-- by the names the layout gives them.
+--
+-- The notes are in treNotes on the left, the one open on the right, shown
+-- one of three ways: edNote (tlua's MarkdownEdit) edits it as it looks,
+-- vwNote (a MarkdownView) shows it to read, its links followed with a
+-- click, and txtSource edits its Markdown. notebook.lua keeps the notes
+-- and their attachments, and reads and writes the .znb.
+
+local gui = require "gui"
+local lfs = require "lfs"
+local md = require "markdown"
+local notebook = require "notebook"
+local picker = require "forms.LinkPicker"
+
+local frm = gui.load "TurboNotes" --[[@as forms.TurboNotes]]
+local edit, view, source, tree = frm.edNote, frm.vwNote, frm.txtSource, frm.treNotes
+
+local nb             -- the notebook
+local path           -- its .znb, or nil before it is saved
+local current        -- the note open, by its path in the notebook
+local mode = "edit"  -- "edit", "read" or "source"
+local openFolders = {}
+local settings = notebook.loadSettings()
+local editorChanged = false -- edNote has changes not yet in the notebook
+local quiet = false         -- the program is changing what is shown
+local saveTimer
+
+local BOOK_FILTER = "Notebooks\t*.znb"
+local ON, OFF = "#c9dcf7", "#e4e4e4"
+
+---------------------------------------------------------------- what shows
+
+local function bookName()
+  return path and notebook.basename(path:gsub("\\", "/")):gsub("%.znb$", "") or "Untitled"
+end
+
+local function updateTitle()
+  frm.caption = (nb.dirty and "• " or "") .. bookName() .. " - turbonotes"
+end
+
+local function updateStatus(note)
+  local parts = {}
+  if current then
+    if mode == "edit" then
+      local words, chars = edit.ed:stats()
+      parts[#parts + 1] = ("%d words, %d characters"):format(words, chars)
+    end
+    parts[#parts + 1] = current
+  end
+  parts[#parts + 1] = (nb.dirty and "not saved" or (path and "saved" or "not saved yet"))
+  if note then parts[#parts + 1] = note end
+  frm.lblStatus.caption = "  " .. table.concat(parts, "   ·   ")
+end
+
+local function updateTree()
+  quiet = true
+  local search = frm.txtSearch.text or ""
+  tree.items = nb:items(openFolders, search ~= "" and nb:search(search) or nil)
+  if current then tree.path = notebook.treePath(current) end
+  quiet = false
+end
+
+local function updateBacklinks()
+  local list = current and nb:backlinks(current) or {}
+  local titles = {}
+  for i, p in ipairs(list) do
+    titles[i] = notebook.title(p) .. (notebook.dirname(p) ~= "" and ("   (" .. notebook.dirname(p) .. ")") or "")
+  end
+  frm.lstBacklinks.items = titles
+  frm.lstBacklinks.tag = list
+  frm.lblBacklinks.caption = #list == 0 and "No backlinks" or (#list == 1 and "1 backlink" or (#list .. " backlinks"))
+end
+
+local function updateButtons()
+  frm.cmdEdit.color = mode == "edit" and ON or OFF
+  frm.cmdRead.color = mode == "read" and ON or OFF
+  frm.cmdSource.color = mode == "source" and ON or OFF
+  local items = frm.Menu1.items
+  for _, menu in ipairs(items) do
+    for _, it in ipairs(menu[2]) do
+      if type(it) == "table" then
+        if it.name == "mnuViewEdit" then it.checked = mode == "edit" end
+        if it.name == "mnuViewRead" then it.checked = mode == "read" end
+        if it.name == "mnuViewSource" then it.checked = mode == "source" end
+      end
+    end
+  end
+  frm.Menu1.items = items
+end
+
+---------------------------------------------------------------- the note open
+
+-- flush puts what the view open has changed into the notebook.
+local function flush()
+  if not current or not nb.notes[current] then return end
+  if mode == "edit" and editorChanged then
+    nb:setText(current, edit:markdown())
+    editorChanged = false
+  elseif mode == "source" then
+    nb:setText(current, source.text)
+  end
+end
+
+-- show puts the note open into the view of the mode.
+local function show()
+  quiet = true
+  local text = current and nb.notes[current]
+  edit.visible, view.visible, source.visible = mode == "edit", mode == "read", mode == "source"
+  if mode == "edit" then
+    edit:load(text or "", nb:pictures(current))
+    editorChanged = false
+  elseif mode == "read" then
+    view.pictures = nb:pictures(current)
+    view.text = text or "*No note is open: pick one on the left, or make one with Cmd+N.*\n"
+  else
+    source.text = text or ""
+  end
+  frm.lblTitle.caption = current and notebook.title(current) or ""
+  quiet = false
+  updateButtons()
+  updateBacklinks()
+  updateStatus()
+end
+
+local function focusView()
+  if mode == "edit" then edit:focus() elseif mode == "read" then view:focus() else source:focus() end
+end
+
+-- open shows a note.
+local function open(p)
+  if p == current then focusView() return end
+  flush()
+  current = p
+  nb.open = p
+  show()
+  updateTree()
+  focusView()
+end
+
+local function setMode(m)
+  if m == mode then return end
+  flush()
+  mode = m
+  settings.view = m
+  notebook.saveSettings(settings)
+  show()
+  focusView()
+end
+
+---------------------------------------------------------------- saving
+
+local function saveTo(file)
+  flush()
+  local ok, err = nb:save(file)
+  if not ok then
+    gui.msgbox("Could not save " .. file .. ":\n" .. tostring(err), "ok", "turbonotes")
+    return false
+  end
+  path = file
+  settings.last = file
+  notebook.saveSettings(settings)
+  updateTitle()
+  updateStatus()
+  return true
+end
+
+local function saveAs()
+  local file = gui.savefile { title = "Save Notebook", filter = BOOK_FILTER, file = bookName() .. ".znb" }
+  if not file then return false end
+  if not file:lower():match("%.znb$") then file = file .. ".znb" end
+  return saveTo(file)
+end
+
+local function save()
+  if not path then return saveAs() end
+  return saveTo(path)
+end
+
+-- changed notes a change: the title says so, and a notebook that has a
+-- file is saved to it a moment after the typing stops.
+local function changed()
+  nb.dirty = true
+  updateTitle()
+  updateStatus()
+  if path then
+    if saveTimer then saveTimer:stop() end
+    saveTimer = gui.after(1.5, function()
+      saveTimer = nil
+      if nb.dirty and path then saveTo(path) end
+    end)
+  end
+end
+
+local function confirmDiscard()
+  flush()
+  if not nb.dirty then return true end
+  if path then return saveTo(path) end
+  local answer = gui.msgbox("Do you want to save this notebook?", "yesnocancel", "turbonotes")
+  if answer == "yes" then return save() end
+  return answer == "no"
+end
+
+local function setNotebook(book, file)
+  nb, path = book, file
+  current = nil
+  openFolders = {}
+  for _, f in ipairs(nb:allFolders()) do openFolders[f] = true end
+  local first = nb.open or nb:notePaths()[1]
+  current = first
+  nb.open = first
+  frm.txtSearch.text = ""
+  show()
+  updateTree()
+  updateTitle()
+  if file then
+    settings.last = file
+    notebook.saveSettings(settings)
+  end
+end
+
+local function openPath(file)
+  local book, err = notebook.load(file)
+  if not book then
+    gui.msgbox("Could not open " .. file .. ":\n" .. tostring(err), "ok", "turbonotes")
+    return false
+  end
+  setNotebook(book, file)
+  return true
+end
+
+---------------------------------------------------------------- notes and folders
+
+-- here is the folder the tree's selection is in, for a new note.
+local function here()
+  local kind, p = nb:at(tree.path)
+  if kind == "folder" then return p end
+  if p then return notebook.dirname(p) end
+  return current and notebook.dirname(current) or ""
+end
+
+local function newNote(dir, name)
+  name = name or gui.inputbox("Name of the new note:", "New Note", "Untitled")
+  if not name then return end
+  local ok, why = notebook.validName(name)
+  if not ok then gui.msgbox(why, "ok", "New Note") return end
+  flush()
+  local p = nb:createNote(dir or here(), name)
+  openFolders[notebook.dirname(p)] = true
+  changed()
+  current = nil
+  open(p)
+  return p
+end
+
+local function newFolder()
+  local name = gui.inputbox("Name of the new folder:", "New Folder", "New folder")
+  if not name then return end
+  local ok, why = notebook.validName(name)
+  if not ok then gui.msgbox(why, "ok", "New Folder") return end
+  local p = nb:createFolder(here(), name)
+  openFolders[p] = true
+  changed()
+  updateTree()
+end
+
+-- rename renames or moves what the tree has selected, or the note open:
+-- a path with folders in it moves it there.
+local function rename(treePath)
+  flush()
+  local kind, p = nb:at(treePath or tree.path)
+  if not kind then kind, p = current and "note", current end
+  if not kind then return end
+  local shown = kind == "note" and notebook.treePath(p) or p
+  local answer = gui.inputbox("New name, or a path to move it to (Folder/Name):", "Rename", shown)
+  if not answer or answer == shown then return end
+  for part in answer:gmatch("[^/]+") do
+    local ok, why = notebook.validName(part)
+    if not ok then gui.msgbox(why, "ok", "Rename") return end
+  end
+  local newPath, err = nb:move(p, answer)
+  if not newPath then gui.msgbox(err, "ok", "Rename") return end
+  if current == p then current = newPath
+  elseif kind == "folder" and current and current:sub(1, #p + 1) == p .. "/" then
+    current = newPath .. current:sub(#p + 1)
+  end
+  openFolders[notebook.dirname(newPath)] = true
+  changed()
+  show()
+  updateTree()
+end
+
+local function delete(treePath)
+  flush()
+  local kind, p = nb:at(treePath or tree.path)
+  if not kind then kind, p = current and "note", current end
+  if not kind then return end
+  local what = kind == "folder" and ("the folder " .. p .. " and everything in it") or ("“" .. notebook.basename(notebook.treePath(p)) .. "”")
+  if gui.msgbox("Delete " .. what .. "?", "yesno", "Delete") ~= "yes" then return end
+  nb:remove(p)
+  if current and not nb.notes[current] then current = nb:notePaths()[1] end
+  changed()
+  show()
+  updateTree()
+end
+
+---------------------------------------------------------------- links and attachments
+
+-- openAttachment opens a file of the notebook's in its own program, from a
+-- copy in the temporary folder.
+local function openAttachment(p)
+  local data = nb.files[p]
+  if not data then return false end
+  local dir = os.tmpname()
+  os.remove(dir)
+  lfs.mkdir(dir)
+  local file = dir .. "/" .. notebook.basename(p)
+  local f = io.open(file, "wb")
+  if not f then return false end
+  f:write(data)
+  f:close()
+  gui.openurl(file)
+  return true
+end
+
+-- follow goes where a link leads: a note (made if it is not there yet), a
+-- file of the notebook's, or a web address.
+local function follow(url)
+  local target = notebook.linkTarget(url)
+  if target then
+    local p = nb:resolve(target, current)
+    if not p then
+      local dir = notebook.dirname(target) ~= "" and notebook.dirname(target) or (current and notebook.dirname(current) or "")
+      flush()
+      p = nb:createNote(dir, notebook.basename(target), "# " .. notebook.basename(target) .. "\n")
+      changed()
+    end
+    open(p)
+    updateTree()
+    return true
+  end
+  local file = notebook.clean(url:gsub("%%(%x%x)", function(h) return string.char(tonumber(h, 16)) end))
+  if file and nb.files[file] then return openAttachment(file) end
+  if url:match("^%a[%w+.-]*:") then gui.openurl(url) return true end
+  updateStatus("no such note or file: " .. url)
+  return true
+end
+
+function edit:onLink(url) follow(url) end
+function view:onLink(url) return follow(url) end
+
+function edit:onHover(url) updateStatus(url and ("Cmd-click to open " .. url) or nil) end
+function view:onHover(url) updateStatus(url) end
+
+-- wikiRun is a link to a note, as the editor keeps one.
+local function wikiRun(title, words)
+  return { text = words or title, link = md.wikiLink(title), wiki = title }
+end
+
+-- pickNote asks which note to link to.
+local function pickNote(start)
+  local titles = {}
+  for _, p in ipairs(nb:notePaths()) do titles[#titles + 1] = notebook.title(p) end
+  table.sort(titles, function(a, b) return a:lower() < b:lower() end)
+  return picker.pick(titles, start)
+end
+
+local function insertWikiLink()
+  if mode == "read" then setMode("edit") end
+  local title = pickNote()
+  if not title then return end
+  if mode == "source" then
+    source:insert("[[" .. title .. "]]")
+  else
+    edit.ed:insertRuns({ wikiRun(title) }, "link")
+    edit.ed.pending = {}
+    edit:changed()
+  end
+end
+
+-- typedLinks turns what was just typed into a link: [[ asks for the note,
+-- and [[Name]] typed out in full becomes a link to it.
+local function typedLinks()
+  local ed = edit.ed
+  if ed:hasSelection() then return end
+  local p = ed.caret
+  local b = ed.blocks[p.b]
+  if not b or not md.hasText(b) or b.type == "code" then return end
+  local before = md.textOf(b):sub(1, p.o)
+  local style = ed:styleAt(p)
+  if style.code or style.link then return end
+  local target, words = before:match("%[%[([^%[%]|]+)|?([^%[%]]*)%]%]$")
+  if target then
+    local len = #target + #words + (words ~= "" and 1 or 0) + 4
+    ed.anchor = { b = p.b, o = p.o - len }
+    ed:insertRuns({ wikiRun(target, words ~= "" and words or nil) }, "link")
+    ed.pending = {}
+    return true
+  end
+  if before:match("%[%[$") and not before:match("%[%[%[$") then
+    local title = pickNote()
+    if title then
+      ed.anchor = { b = p.b, o = p.o - 2 }
+      ed:insertRuns({ wikiRun(title) }, "link")
+      ed.pending = {}
+      return true
+    end
+  end
+end
+
+-- attach adds files to the notebook and puts them in the note at the
+-- caret: pictures to show, other files as links to them.
+local function attach(files)
+  if not current then newNote(nil, "Untitled") end
+  if mode == "read" then setMode("edit") end
+  local added = 0
+  for _, file in ipairs(files) do
+    local f = io.open(file, "rb")
+    if f then
+      local data = f:read("*a")
+      f:close()
+      local name = notebook.basename(file:gsub("\\", "/"))
+      local p = nb:attach(name, data)
+      local isPic = notebook.isPicture(p) and nb:picture(p)
+      local src = p:gsub(" ", "%%20")
+      if mode == "source" then
+        source:insert((isPic and "![%s](%s)\n" or "[%s](%s)"):format(name, src))
+      elseif isPic then
+        edit.ed:insertImage(src, name)
+      else
+        edit.ed:insertRuns({ { text = name, link = src } }, "link")
+        edit.ed.pending = {}
+      end
+      added = added + 1
+    end
+  end
+  if added > 0 then
+    if mode == "edit" then edit:changed() end
+    updateTree()
+    changed()
+  end
+end
+
+local function insertPicture()
+  local files = gui.openfile { title = "Insert Picture", filter = "Pictures\t*.{png,jpg,jpeg,gif}", multiple = true }
+  if files then attach(files) end
+end
+
+local function insertFile()
+  local files = gui.openfile { title = "Attach Files", multiple = true }
+  if files then attach(files) end
+end
+
+---------------------------------------------------------------- the views
+
+function edit:onChange()
+  if quiet then return end
+  editorChanged = true
+  if typedLinks() then
+    quiet = true
+    edit:changed()
+    quiet = false
+  end
+  changed()
+end
+
+function edit:onSelect()
+  if not quiet then updateStatus() end
+end
+
+function edit:onMenu()
+  local ed = edit.ed
+  local url = ed:linkAt()
+  local items = {
+    { "Cu&t", function() gui.clipboard(ed:copyText()) ed:deleteSelection() edit:changed() end, enabled = ed:hasSelection() },
+    { "&Copy", function() gui.clipboard(ed:copyText()) end, enabled = ed:hasSelection() },
+    { "&Paste", function() ed:paste(gui.clipboard() or "") edit:changed() end },
+    "-",
+    { "Link to &Note...", insertWikiLink },
+    { "Insert &Picture...", insertPicture },
+    { "Attach &File...", insertFile },
+  }
+  if url then
+    items[#items + 1] = "-"
+    items[#items + 1] = { "&Open Link", function() follow(url) end }
+    items[#items + 1] = { "&Remove Link", function() ed:setLink("") edit:changed() end }
+  end
+  gui.popup(items, frm)
+end
+
+function source:onChange()
+  if quiet then return end
+  changed()
+end
+
+local function dropped(_, text, lines)
+  local files = {}
+  for _, l in ipairs(lines or {}) do
+    if lfs.attributes(l, "mode") == "file" then files[#files + 1] = l end
+  end
+  if #files == 1 and files[1]:lower():match("%.znb$") then
+    if confirmDiscard() then openPath(files[1]) end
+    return
+  end
+  if #files > 0 then attach(files) end
+end
+edit.onDrop = dropped
+source.onDrop = dropped
+frm.onDrop = dropped
+
+function frm.cmdEdit:onClick() setMode("edit") end
+function frm.cmdRead:onClick() setMode("read") end
+function frm.cmdSource:onClick() setMode("source") end
+
+---------------------------------------------------------------- the tree
+
+function tree:onChange()
+  if quiet then return end
+  local kind, p = nb:at(self.path)
+  if kind == "note" then
+    open(p)
+  elseif kind == "file" then
+    flush()
+    -- An attachment shows in the reading view, a picture as itself.
+    quiet = true
+    current = nil
+    edit.visible, view.visible, source.visible = false, true, false
+    view.pictures = nb:pictures()
+    local src = p:gsub(" ", "%%20")
+    view.text = ("# %s\n\n%s\n\n[Open it](%s) in its own program · %d bytes\n"):format(notebook.basename(p),
+      notebook.isPicture(p) and ("![%s](%s)"):format(notebook.basename(p), src) or "", src, #nb.files[p])
+    frm.lblTitle.caption = notebook.basename(p)
+    quiet = false
+    updateBacklinks()
+  end
+  -- A tree's own menu is about what it has selected.
+  local items = {
+    { "&New Note", function() newNote() end },
+    { "New &Folder", newFolder },
+  }
+  if kind then
+    items[#items + 1] = "-"
+    if kind == "file" then items[#items + 1] = { "&Open", function() openAttachment(p) end } end
+    items[#items + 1] = { "&Rename or Move...", function() rename() end }
+    items[#items + 1] = { "&Delete", function() delete() end }
+  end
+  self.contextMenu = items
+end
+
+function tree:onDoubleClick()
+  local kind, p = nb:at(self.path)
+  if kind == "file" then openAttachment(p) end
+end
+
+function tree:onToggle(treePath, isOpen)
+  openFolders[treePath] = isOpen or nil
+end
+
+function frm.txtSearch:onChange()
+  updateTree()
+  local search = self.text or ""
+  if search ~= "" then
+    local found = nb:search(search)
+    updateStatus(#found == 0 and "no note has that" or (#found == 1 and "1 note" or (#found .. " notes")))
+  end
+end
+
+function frm.txtSearch:onKey(key)
+  if key == "Enter" then
+    local found = nb:search(self.text or "")
+    if found[1] then open(found[1]) end
+    return true
+  end
+  if key == "Escape" then
+    self.text = ""
+    updateTree()
+    focusView()
+    return true
+  end
+end
+
+function frm.lstBacklinks:onDoubleClick()
+  local list = self.tag or {}
+  local p = list[self.selected or 0]
+  if p then open(p) end
+end
+
+function frm.cmdNewNote:onClick() newNote() end
+function frm.cmdNewFolder:onClick() newFolder() end
+
+---------------------------------------------------------------- menus
+
+-- inSource wraps the selection of the source view in Markdown marks.
+local function wrapSource(mark)
+  local sel = source.selectedText or ""
+  source:insert(mark .. sel .. mark)
+end
+
+local function format(fn, mark)
+  if mode == "source" then
+    if mark then wrapSource(mark) else updateStatus("paragraph styles are for the Edit view") end
+    return
+  end
+  if mode == "read" then setMode("edit") end
+  fn(edit.ed)
+  edit:changed()
+end
+
+local function setStyle(t, toggle)
+  format(function(ed) ed:setType(t, toggle) end)
+end
+
+local function clip(op)
+  if mode == "source" then
+    local sel = source.selectedText or ""
+    if op == "copy" or op == "cut" then if sel ~= "" then gui.clipboard(sel) end end
+    if op == "cut" then source:insert("") end
+    if op == "paste" then source:insert(gui.clipboard() or "") end
+    return
+  end
+  if mode == "read" then
+    if op == "copy" then view:copy() end
+    return
+  end
+  local ed = edit.ed
+  if op == "copy" or op == "cut" then
+    if ed:hasSelection() then gui.clipboard(ed:copyText()) end
+    if op == "cut" then ed:deleteSelection() edit:changed() end
+  else
+    ed:paste(gui.clipboard() or "")
+    edit:changed()
+  end
+end
+
+local function editLink()
+  if mode == "read" then setMode("edit") end
+  local current_ = mode == "edit" and edit.ed:linkAt() or ""
+  local url = gui.inputbox("Link to (a web address, or a note's name):", "Link", current_ or "")
+  if not url then return end
+  if mode == "source" then
+    local sel = source.selectedText or ""
+    source:insert(("[%s](%s)"):format(sel ~= "" and sel or url, url))
+    return
+  end
+  edit.ed:setLink(url)
+  edit:changed()
+end
+
+local KEYS = [==[
+Notes
+  Cmd+N            a new note, in the folder selected
+  F2               rename or move the note (type Folder/Name to move it)
+  Cmd+Shift+F      search the notes' names and text
+  Cmd+E            switch between editing and reading
+
+Writing (the Edit view)
+  # ## ### then space   headings          - or 1. then space   lists
+  > then space          a quote           --- then Enter       a rule
+  Cmd+B / I / Shift+C   bold, italic, code
+  [[                    link to a note: pick it, or type [[Name]]
+  Cmd+K                 a link to a web address
+  Cmd-click a link      follow it; a note that is not there yet is made
+  drop files on a note  attach them: pictures show, files are linked
+
+The notebook is saved by itself a moment after each change, once it has a
+file. A .znb is a zip of the notes as Markdown files, in their folders,
+with the attachments in attachments/: unzipped, it is a folder of notes
+other Markdown programs open as well.]==]
+
+local actions = {
+  mnuNewBook = function()
+    if confirmDiscard() then setNotebook(notebook.new(), nil) end
+  end,
+  mnuOpen = function()
+    if not confirmDiscard() then return end
+    local file = gui.openfile { title = "Open Notebook", filter = BOOK_FILTER }
+    if file then openPath(file) end
+  end,
+  mnuSave = save,
+  mnuSaveAs = saveAs,
+  mnuImport = function()
+    if not confirmDiscard() then return end
+    local dir = gui.choosedir { title = "Import a Folder of Notes" }
+    if not dir then return end
+    local book, err = notebook.importFolder(dir)
+    if not book then gui.msgbox("Could not import " .. dir .. ":\n" .. tostring(err), "ok", "turbonotes") return end
+    setNotebook(book, nil)
+    nb.dirty = true
+    updateTitle()
+  end,
+  mnuExport = function()
+    flush()
+    local dir = gui.choosedir { title = "Export the Notes into a Folder" }
+    if not dir then return end
+    local ok, err = nb:exportFolder(dir)
+    if not ok then gui.msgbox("Could not export:\n" .. tostring(err), "ok", "turbonotes") return end
+    updateStatus("exported to " .. dir)
+  end,
+  mnuExit = function() frm:close() end,
+  mnuNewNote = function() newNote() end,
+  mnuNewFolder = newFolder,
+  mnuRename = function() rename() end,
+  mnuDelete = function() delete() end,
+  mnuFind = function() frm.txtSearch:focus() end,
+  mnuUndo = function() if mode == "edit" then edit.ed:undo() edit:changed() end end,
+  mnuRedo = function() if mode == "edit" then edit.ed:redo() edit:changed() end end,
+  mnuCut = function() clip("cut") end,
+  mnuCopy = function() clip("copy") end,
+  mnuPaste = function() clip("paste") end,
+  mnuSelectAll = function()
+    if mode == "edit" then edit.ed:selectAll() edit:moved()
+    elseif mode == "read" then view:selectAll()
+    else source:select(1, #source.text) end
+  end,
+  mnuWikiLink = insertWikiLink,
+  mnuLink = editLink,
+  mnuPicture = insertPicture,
+  mnuFile = insertFile,
+  mnuTable = function()
+    local table_ = "| Column | Column |\n|---|---|\n|  |  |\n"
+    if mode == "source" then source:insert(table_) return end
+    format(function(ed) ed:paste(table_) end)
+    updateStatus("a table's cells are edited in the Source view")
+  end,
+  mnuToc = function()
+    if mode == "source" then source:insert("[[toc]]\n") return end
+    format(function(ed) ed:paste("[[toc]]\n\n") end)
+  end,
+  mnuRule = function() format(function(ed) ed:insertRule() end) end,
+  mnuBold = function() format(function(ed) ed:toggle("b") end, "**") end,
+  mnuItalic = function() format(function(ed) ed:toggle("i") end, "*") end,
+  mnuCode = function() format(function(ed) ed:toggle("code") end, "`") end,
+  mnuNormal = function() setStyle("p") end,
+  mnuH1 = function() setStyle("h1") end,
+  mnuH2 = function() setStyle("h2") end,
+  mnuH3 = function() setStyle("h3") end,
+  mnuQuote = function() setStyle("quote", true) end,
+  mnuCodeBlock = function() setStyle("code", true) end,
+  mnuBullets = function() setStyle("ul", true) end,
+  mnuNumbers = function() setStyle("ol", true) end,
+  mnuViewEdit = function() setMode("edit") end,
+  mnuViewRead = function() setMode("read") end,
+  mnuViewSource = function() setMode("source") end,
+  mnuToggleView = function() setMode(mode == "read" and "edit" or "read") end,
+  mnuLarger = function()
+    settings.textSize = math.min(32, settings.textSize + 1)
+    edit.textSize, view.textSize = settings.textSize, settings.textSize
+    notebook.saveSettings(settings)
+  end,
+  mnuSmaller = function()
+    settings.textSize = math.max(10, settings.textSize - 1)
+    edit.textSize, view.textSize = settings.textSize, settings.textSize
+    notebook.saveSettings(settings)
+  end,
+  mnuKeys = function() gui.msgbox(KEYS, "ok", "turbonotes Shortcuts") end,
+  mnuAbout = function()
+    gui.msgbox("turbonotes\n\nNotes in Markdown, linked to each other, kept in one .znb file with their pictures and files.",
+      "ok", "About turbonotes")
+  end,
+}
+
+function frm.Menu1:onClick(name)
+  local fn = actions[name]
+  if fn then fn() end
+  updateButtons()
+end
+
+---------------------------------------------------------------- the window
+
+function frm:onClose()
+  if not confirmDiscard() then return false end
+end
+
+mode = (settings.view == "read" or settings.view == "source") and settings.view or "edit"
+edit.textSize, view.textSize = settings.textSize, settings.textSize
+
+-- A notebook named on the command line is opened, or the last one.
+local start = arg and arg[1]
+if not (start and start ~= "" and lfs.attributes(start, "mode") == "file") then
+  start = settings.last ~= "" and lfs.attributes(settings.last, "mode") == "file" and settings.last or nil
+end
+if not (start and openPath(start)) then setNotebook(notebook.new(), nil) end
+gui.after(0, focusView)
+
+-- Exposed for the tests.
+frm.openPath = openPath
+frm.saveTo = saveTo
+frm.open = open
+frm.setMode = setMode
+frm.follow = follow
+frm.attach = attach
+frm.actions = actions
+frm.notebook = function() return nb, current, mode end
+frm.flush = flush
+
+return frm

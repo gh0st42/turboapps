@@ -1,0 +1,21 @@
+---@meta
+-- What TurboNotes.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.TurboNotes: gui.Form
+---@field Menu1 gui.Menu
+---@field cmdEdit gui.Button
+---@field cmdNewFolder gui.Button
+---@field cmdNewNote gui.Button
+---@field cmdRead gui.Button
+---@field cmdSource gui.Button
+---@field edNote gui.MarkdownEdit
+---@field lblBacklinks gui.Label
+---@field lblStatus gui.Label
+---@field lblTitle gui.Label
+---@field lstBacklinks gui.ListBox
+---@field pnlHeader gui.Panel
+---@field treNotes gui.Tree
+---@field txtSearch gui.TextBox
+---@field txtSource gui.TextBox
+---@field vwNote gui.MarkdownView

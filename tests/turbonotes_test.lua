@@ -1,0 +1,297 @@
+-- tlua -p apps/turbonotes -p tests tests/turbonotes_test.lua
+
+local t = require "testing"
+local notebook = require "notebook"
+local png = require "png"
+local zip = require "zip"
+local lfs = require "lfs"
+local test, eq, ok = t.test, t.eq, t.ok
+
+local root = os.tmpname()
+os.remove(root)
+lfs.mkdir(root)
+notebook.settingsFile = root .. "/settings.lua"
+
+local function picture()
+  local img = png.new(4, 3, "#ff0000")
+  return img:encode()
+end
+
+local function names(list) return table.concat(list, ",") end
+
+---------------------------------------------------------------- the notebook
+
+test("a new notebook has a note to start from", function()
+  local nb = notebook.new()
+  eq(names(nb:notePaths()), "Ideas.md,Welcome.md")
+  eq(nb.open, "Welcome.md")
+  eq(names(nb:backlinks("Ideas.md")), "Welcome.md")
+  eq(names(nb:backlinks("Welcome.md")), "Ideas.md")
+end)
+
+test("paths", function()
+  eq(notebook.clean("a//b/./c.md"), "a/b/c.md")
+  eq(notebook.clean("../x.md"), nil)
+  eq(notebook.clean("a\\b.md"), "a/b.md")
+  eq(notebook.title("Projects/Road map.md"), "Road map")
+  eq(notebook.treePath("Projects/Road map.md"), "Projects/Road map")
+  eq(notebook.treePath("attachments/a.png"), "attachments/a.png")
+  ok(notebook.validName("Ideas 2"))
+  eq(notebook.validName("a/b"), false)
+  eq(notebook.validName("[x]"), false)
+  eq(notebook.validName(".hidden"), false)
+  eq(notebook.linkTarget("Page Name.md"), "Page Name")
+  eq(notebook.linkTarget("Projects/Plan.md#goals"), "Projects/Plan")
+  eq(notebook.linkTarget("https://example.com"), nil)
+  eq(notebook.linkTarget("attachments/a.pdf"), nil)
+end)
+
+test("notes, folders and the tree", function()
+  local nb = notebook.new(false)
+  local a = nb:createNote("", "Alpha")
+  local b = nb:createNote("Projects", "Beta", "# Beta\n\nsee [[Alpha]]\n")
+  local c = nb:createNote("Projects", "Beta")
+  eq(c, "Projects/Beta 1.md")
+  nb:createFolder("", "Empty")
+  nb.files["attachments/x.png"] = picture()
+  local items = nb:items({ Projects = true })
+  -- Folders first, then notes, then files.
+  eq(items[1][1], "attachments")
+  eq(items[2][1], "Empty")
+  eq(items[3][1], "Projects")
+  eq(items[3].open, true)
+  eq(names(items[3][2]), "Beta,Beta 1")
+  eq(items[4], "Alpha")
+  eq(select(2, nb:at("Projects/Beta")), b)
+  eq(nb:at("Projects"), "folder")
+  eq(nb:at("attachments/x.png"), "file")
+  eq(nb:at("nothing"), nil)
+  -- Only some notes, in their folders, opened.
+  local some = nb:items({}, { b })
+  eq(#some, 1)
+  eq(some[1][1], "Projects")
+  eq(names(some[1][2]), "Beta")
+  eq(a, "Alpha.md")
+end)
+
+test("links are found by name, the note's own folder first", function()
+  local nb = notebook.new(false)
+  nb:createNote("", "Plan")
+  nb:createNote("Work", "Plan")
+  local other = nb:createNote("Work", "Notes", "[[Plan]] and [[Home|home page]] and [x](Other.md)\n")
+  eq(nb:resolve("Plan", other), "Work/Plan.md")
+  eq(nb:resolve("Plan", "Top.md"), "Plan.md")
+  eq(nb:resolve("Work/Plan"), "Work/Plan.md")
+  eq(nb:resolve("plan#goals", other), "Work/Plan.md")
+  eq(nb:resolve("Nowhere"), nil)
+  eq(names(nb:backlinks("Work/Plan.md")), "Work/Notes.md")
+  eq(names(nb:backlinks("Plan.md")), "")
+end)
+
+test("renaming and moving keep links working", function()
+  local nb = notebook.new(false)
+  local idea = nb:createNote("", "Idea")
+  nb:createNote("", "Index", "See [[Idea]], [[idea|this]] and [[Idea#top]].\n")
+  local moved = nb:move(idea, "Archive/Old idea")
+  eq(moved, "Archive/Old idea.md")
+  eq(nb.notes["Index.md"], "See [[Old idea]], [[Old idea|this]] and [[Old idea#top]].\n")
+  eq(names(nb:backlinks(moved)), "Index.md")
+  local _, err = nb:move("Index.md", "Archive/Old idea")
+  ok(err and err:find("there already"), tostring(err))
+  -- A folder moves with everything in it.
+  nb:move("Archive", "Old/Archive")
+  ok(nb.notes["Old/Archive/Old idea.md"])
+  -- A file moves, and the notes showing it follow.
+  nb.files["attachments/p.png"] = picture()
+  nb:setText("Index.md", "![p](attachments/p.png)\n")
+  nb:move("attachments/p.png", "attachments/q.png")
+  eq(nb.notes["Index.md"], "![p](attachments/q.png)\n")
+  nb:remove("Old")
+  eq(names(nb:notePaths()), "Index.md")
+end)
+
+test("attachments", function()
+  local nb = notebook.new(false)
+  local p = nb:attach("/some/where/red dot.png", picture())
+  eq(p, "attachments/red dot.png")
+  eq(nb:attach("red dot.png", "x"), "attachments/red dot 1.png")
+  eq(nb:picture("attachments/red%20dot.png").width, 4)
+  eq(nb:pictures("Notes/a.md")["attachments/red dot.png"].height, 3)
+  eq(nb:picture("nothing.png"), nil)
+  nb:createNote("", "A", "![d](attachments/red dot.png)\n")
+  eq(names(nb:unused()), "attachments/red dot 1.png")
+end)
+
+test("search", function()
+  local nb = notebook.new(false)
+  nb:createNote("", "Shopping", "milk, eggs\n")
+  nb:createNote("", "Recipes", "pancakes need Eggs\n")
+  nb:createNote("", "Eggs", "a note\n")
+  eq(names(nb:search("eggs")), "Eggs.md,Recipes.md,Shopping.md")
+  eq(names(nb:search("zebra")), "")
+end)
+
+test("a .znb is a zip of the notes, in their folders", function()
+  local nb = notebook.new(false)
+  nb:createNote("", "Home", "# Home\n\n[[Work/Plan]]\n")
+  nb:createNote("Work", "Plan", "# Plan\n\n![dot](attachments/dot.png)\n")
+  nb:createFolder("", "Empty")
+  nb:attach("dot.png", picture())
+  nb.open = "Work/Plan.md"
+  local file = root .. "/book.znb"
+  ok(nb:save(file))
+  eq(nb.dirty, false)
+  local z = zip.open(file)
+  eq(names(z:list()), "notebook.json,Home.md,Work/Plan.md,attachments/dot.png")
+  eq(z:info("Home.md").method, "deflate")
+  eq(z:info("attachments/dot.png").method, "store")
+  local back = assert(notebook.load(file))
+  eq(back.notes["Work/Plan.md"], "# Plan\n\n![dot](attachments/dot.png)\n")
+  eq(back.open, "Work/Plan.md")
+  ok(back.folders.Empty)
+  eq(back:picture("attachments/dot.png").width, 4)
+  eq(notebook.load(root .. "/missing.znb"), nil)
+  local f = io.open(root .. "/bad.znb", "wb") f:write("not a zip") f:close()
+  local none, err = notebook.load(root .. "/bad.znb")
+  eq(none, nil)
+  ok(tostring(err):find("not a notebook"))
+end)
+
+test("folders of notes come in and go out", function()
+  local nb = notebook.new(false)
+  nb:createNote("Sub", "Deep", "deep\n")
+  nb:attach("a.txt", "hello")
+  local out = root .. "/vault"
+  lfs.mkdir(out)
+  ok(nb:exportFolder(out))
+  local f = io.open(out .. "/Sub/Deep.md") eq(f:read("*a"), "deep\n") f:close()
+  local back = assert(notebook.importFolder(out))
+  eq(back.notes["Sub/Deep.md"], "deep\n")
+  eq(back.files["attachments/a.txt"], "hello")
+  eq(back.open, "Sub/Deep.md")
+end)
+
+---------------------------------------------------------------- the form
+
+-- The form asks nothing while it is tested: a notebook with changes is
+-- left without saving.
+local gui = require "gui"
+gui.msgbox = function() return "no" end
+
+local frm = require "forms.TurboNotes"
+local picker = require "forms.LinkPicker"
+local pickWith -- what the picker answers, in place of asking
+picker.pick = function() return pickWith end
+
+local edit = frm.edNote
+
+local function keys(s)
+  for ch in s:gmatch("[%z\1-\127\194-\244][\128-\191]*") do edit:fire("onKey", ch, ch) end
+end
+
+local function fresh()
+  frm.actions.mnuNewBook()
+  frm.setMode("edit")
+  return frm.notebook()
+end
+
+test("form: the first note shows, and typing goes into it", function()
+  local nb, current, mode = fresh()
+  eq(current, "Welcome.md")
+  eq(mode, "edit")
+  eq(frm.treNotes.path, "Welcome")
+  eq(frm.lblTitle.caption, "Welcome")
+  edit.ed:moveToDocument(1)
+  edit:moved()
+  edit:fire("onKey", "Enter", "")
+  keys("More text")
+  frm.flush()
+  ok(nb.notes["Welcome.md"]:find("More text\n$"), nb.notes["Welcome.md"])
+  ok(frm.caption:find("^•"), frm.caption)
+end)
+
+test("form: [[Name]] typed becomes a link, and [[ asks for the note", function()
+  local nb = fresh()
+  edit.ed:moveToDocument(1)
+  edit:moved()
+  edit:fire("onKey", "Enter", "")
+  keys("see [[Ideas]] now")
+  frm.flush()
+  ok(nb.notes["Welcome.md"]:find("see %[%[Ideas%]%] now\n$"), nb.notes["Welcome.md"])
+  pickWith = "Ideas"
+  keys(" and [[")
+  pickWith = nil
+  keys(" too")
+  frm.flush()
+  ok(nb.notes["Welcome.md"]:find("and %[%[Ideas%]%] too\n$"), nb.notes["Welcome.md"])
+  -- Cancelled, [[ stays as it was typed.
+  keys(" [[")
+  frm.flush()
+  ok(nb.notes["Welcome.md"]:find("\\%[\\%[\n$"), nb.notes["Welcome.md"])
+end)
+
+test("form: links go to notes, made when they are not there yet", function()
+  local nb = fresh()
+  frm.follow("Ideas.md")
+  eq(select(2, frm.notebook()), "Ideas.md")
+  eq(frm.lblBacklinks.caption, "1 backlink")
+  frm.follow("Later.md")
+  eq(select(2, frm.notebook()), "Later.md")
+  eq(nb.notes["Later.md"], "# Later\n")
+  eq(frm.treNotes.path, "Later")
+end)
+
+test("form: three views of one note", function()
+  local nb = fresh()
+  frm.open("Ideas.md")
+  frm.setMode("source")
+  eq(frm.txtSource.visible, true)
+  eq(frm.edNote.visible, false)
+  eq(frm.txtSource.text, nb.notes["Ideas.md"])
+  frm.txtSource.text = "# Ideas\n\nchanged in the source\n"
+  frm.txtSource:fire("onChange")
+  frm.setMode("read")
+  eq(frm.vwNote.visible, true)
+  eq(nb.notes["Ideas.md"], "# Ideas\n\nchanged in the source\n")
+  eq(frm.vwNote.text, nb.notes["Ideas.md"])
+  frm.setMode("edit")
+  eq(edit:markdown(), "# Ideas\n\nchanged in the source\n")
+  frm.actions.mnuToggleView()
+  eq(select(3, frm.notebook()), "read")
+  frm.actions.mnuToggleView()
+  eq(select(3, frm.notebook()), "edit")
+end)
+
+test("form: pictures and files go in at the caret, and into the notebook", function()
+  local nb = fresh()
+  local pic = root .. "/photo.png"
+  local f = io.open(pic, "wb") f:write(picture()) f:close()
+  local doc = root .. "/notes.txt"
+  f = io.open(doc, "wb") f:write("plain") f:close()
+  frm.open("Ideas.md")
+  edit.ed:moveToDocument(1)
+  edit:moved()
+  frm.attach({ pic, doc })
+  frm.flush()
+  ok(nb.files["attachments/photo.png"])
+  eq(nb.files["attachments/notes.txt"], "plain")
+  ok(nb.notes["Ideas.md"]:find("!%[photo.png%]%(attachments/photo.png%)"), nb.notes["Ideas.md"])
+  ok(nb.notes["Ideas.md"]:find("%[notes.txt%]%(attachments/notes.txt%)"), nb.notes["Ideas.md"])
+  eq(edit.pictures["attachments/photo.png"].width, 4)
+end)
+
+test("form: save, then open again", function()
+  local nb = fresh()
+  frm.follow("Saved.md")
+  local file = root .. "/form.znb"
+  ok(frm.saveTo(file))
+  ok(not frm.caption:find("^•"), frm.caption)
+  ok(frm.caption:find("^form %- turbonotes"), frm.caption)
+  fresh()
+  ok(frm.openPath(file))
+  local back, current = frm.notebook()
+  eq(current, "Saved.md")
+  ok(back.notes["Welcome.md"])
+end)
+
+t.done("turbonotes")
