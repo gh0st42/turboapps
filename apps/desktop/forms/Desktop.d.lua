@@ -1,0 +1,22 @@
+---@meta
+-- What Desktop.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.Desktop: gui.Form
+---@field Menu1 gui.Menu
+---@field cmdDesign gui.Button
+---@field cmdLaunch gui.Button
+---@field cmdNewCategory gui.Button
+---@field cmdRefresh gui.Button
+---@field cmdSaveCategories gui.Button
+---@field cmdSetCategory gui.Button
+---@field lblHint gui.Label
+---@field lblInfo gui.Label
+---@field lblStatus gui.Label
+---@field lblTitle gui.Label
+---@field lstApps gui.ListBox
+---@field lstCategories gui.ListBox
+---@field lstCategoryApps gui.ListBox
+---@field pgAll gui.Page
+---@field pgCategories gui.Page
+---@field tabViews gui.Tabs

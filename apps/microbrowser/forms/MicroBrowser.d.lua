@@ -1,0 +1,19 @@
+---@meta
+-- What MicroBrowser.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.MicroBrowser: gui.Form
+---@field Menu1 gui.Menu
+---@field cmdBack gui.Button
+---@field cmdBookmark gui.Button
+---@field cmdBookmarked gui.Button
+---@field cmdForward gui.Button
+---@field cmdHome gui.Button
+---@field cmdReload gui.Button
+---@field cmdStop gui.Button
+---@field lblStatus gui.Label
+---@field pnlBar gui.Panel
+---@field pnlTabs gui.Panel
+---@field tabBar gui.Object
+---@field txtAddress gui.TextBox
+---@field vwPage gui.MarkdownView

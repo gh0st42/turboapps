@@ -1,0 +1,15 @@
+---@meta
+-- What Bookmarks.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.Bookmarks: gui.Form
+---@field cmdClose gui.Button
+---@field cmdDelete gui.Button
+---@field cmdDown gui.Button
+---@field cmdOpen gui.Button
+---@field cmdUp gui.Button
+---@field lblTitle gui.Label
+---@field lblUrl gui.Label
+---@field lstMarks gui.ListBox
+---@field txtTitle gui.TextBox
+---@field txtUrl gui.TextBox
