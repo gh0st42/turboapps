@@ -141,8 +141,9 @@ what it is and how it is used. UI text is plain English, without jargon.
 - chipstudio (a chiptune editor for BeepBox songs) is new, and needs tlua's
   `beepbox` and `audio` modules, made for it after 0.6.3 and not released
   yet. `beepbox` is fz's synthesiser: fz's `bbx/` module
-  (github.com/gh0st42/fz/bbx), which tlua finds through a `replace` to
-  `../friendzone/bbx` until it is published. Its tests stand in for both
+  (github.com/gh0st42/fz/bbx, tagged `bbx/v0.1.0` with fz 0.8.0), which
+  tlua requires. A change to the synthesiser is made in fz, tagged there,
+  and taken into tlua with `go get github.com/gh0st42/fz/bbx@<tag>`. Its tests stand in for both
   modules (fakes in tests/chipstudio_test.lua), so they make no sound.
   Never play sound at full volume while trying things: volume 0, or none.
 - files lists the drives Linux automounts (from /proc/self/mounts) and
