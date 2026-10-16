@@ -69,20 +69,44 @@ test("command builds launch and design calls", function()
   eq(designApp[3]:match("/apps/desktop$") ~= nil, true)
 end)
 
+-- withDefaults runs fn with the built-in categories in effect, not those
+-- of apps/desktop/categories.lua, which the user changes from the app,
+-- and puts back what was there.
+local function withDefaults(fn)
+  local live = catalog.categorySetup()
+  catalog.applyCategories {}
+  local ok, err = pcall(fn)
+  catalog.applyCategories(live)
+  if not ok then error(err, 0) end
+end
+
 test("categoryOf maps known app names", function()
-  eq(catalog.categoryOf("microword"), "Office")
-  eq(catalog.categoryOf("pixel"), "Games")
-  eq(catalog.categoryOf("files"), "Utilities")
-  eq(catalog.categoryOf("designer"), "Development")
-  eq(catalog.categoryOf("something-new"), "Other")
+  withDefaults(function()
+    eq(catalog.categoryOf("microword"), "Office")
+    eq(catalog.categoryOf("pixel"), "Games")
+    eq(catalog.categoryOf("files"), "Utilities")
+    eq(catalog.categoryOf("designer"), "Development")
+    eq(catalog.categoryOf("something-new"), "Other")
+  end)
 end)
 
 test("categoryOrder follows configured order", function()
-  ok(catalog.categoryOrder("Office") < catalog.categoryOrder("Utilities"), "Office before Utilities")
-  ok(catalog.categoryOrder("Utilities") < catalog.categoryOrder("Development"), "Utilities before Development")
-  ok(catalog.categoryOrder("Development") < catalog.categoryOrder("Games"), "Development before Games")
-  ok(catalog.categoryOrder("Games") < catalog.categoryOrder("Other"), "Games before Other")
-  ok(catalog.categoryOrder("NotConfigured") > catalog.categoryOrder("Other"), "unknown categories sort after configured")
+  withDefaults(function()
+    ok(catalog.categoryOrder("Office") < catalog.categoryOrder("Utilities"), "Office before Utilities")
+    ok(catalog.categoryOrder("Utilities") < catalog.categoryOrder("Development"), "Utilities before Development")
+    ok(catalog.categoryOrder("Development") < catalog.categoryOrder("Games"), "Development before Games")
+    ok(catalog.categoryOrder("Games") < catalog.categoryOrder("Other"), "Games before Other")
+    ok(catalog.categoryOrder("NotConfigured") > catalog.categoryOrder("Other"), "unknown categories sort after configured")
+  end)
+end)
+
+test("the categories file's choices win over the built-in ones", function()
+  local live = catalog.categorySetup()
+  catalog.applyCategories { order = { "Office", "Creativity" }, map = { pixel = "Creativity" } }
+  eq(catalog.categoryOf("pixel"), "Creativity")
+  eq(catalog.categoryOf("microword"), "Office", "the rest keep theirs")
+  ok(catalog.categoryOrder("Office") < catalog.categoryOrder("Creativity"))
+  catalog.applyCategories(live)
 end)
 
 test("categories can be written and read from desktop config", function()
@@ -108,3 +132,5 @@ test("applyCategories overrides runtime mapping", function()
   ok(catalog.categoryOrder("A") < catalog.categoryOrder("B"), "configured order in effect")
   catalog.applyCategories(old)
 end)
+
+t.done("desktop")
