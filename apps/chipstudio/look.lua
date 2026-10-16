@@ -8,6 +8,8 @@ M.colors = {
   selectedRow = "#e1e7f5", loop = "#d6ecd6", playhead = "#ff9f1a", shared = "#1d1d1f",
   onColor = "#1d1d1f",
   roll = "#fbfbfc", rowAlt = "#f2f3f6", keyRow = "#e4ecfb", offScale = "#fbe3e3",
+  noteBox = "#9da2ad", bend = "#b2303a", record = "#d63a3a",
+  muted = "#b9bbc2", mute = "#d63a3a", solo = "#e3a21a",
   beat = "#c9ccd4", step = "#e7e8ec", barLine = "#8d909a", gutter = "#eceef2",
 }
 

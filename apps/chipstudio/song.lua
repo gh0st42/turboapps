@@ -376,6 +376,87 @@ function M.move(s, p, n, tick, semitones, maxPitch)
   return true
 end
 
+---------------------------------------------------------------- a note's shape
+
+-- A note's points say how loud it is (volume, 0 to 100) and how far it is
+-- bent (pitchBend, in semitones) along it, from its start to its end; in
+-- between, the synthesiser goes straight from one point to the next.
+
+local function lerp(a, b, f) return a + (b - a) * f end
+
+-- shapeAt is a note's volume and bend at a tick, between its points.
+function M.shapeAt(n, tick)
+  local pts = n.points
+  if tick <= pts[1].tick then return pts[1].volume or 100, pts[1].pitchBend or 0 end
+  for i = 2, #pts do
+    local a, b = pts[i - 1], pts[i]
+    if tick <= b.tick then
+      local f = (b.tick > a.tick) and (tick - a.tick) / (b.tick - a.tick) or 0
+      return lerp(a.volume or 100, b.volume or 100, f), lerp(a.pitchBend or 0, b.pitchBend or 0, f)
+    end
+  end
+  local last = pts[#pts]
+  return last.volume or 100, last.pitchBend or 0
+end
+
+-- pointFor is the point of a note an edit at tick means: the one there, or
+-- its start or end when tick is next to them, or else a new point there,
+-- put in where the shape already is so nothing changes until it is moved.
+function M.pointFor(n, tick)
+  local pts = n.points
+  local start, stop = pts[1].tick, pts[#pts].tick
+  if tick <= start then return 1 end
+  if tick >= stop - 1 then return #pts end
+  for i, pt in ipairs(pts) do
+    if pt.tick == tick then return i end
+  end
+  local vol, bend = M.shapeAt(n, tick)
+  for i = 2, #pts do
+    if tick < pts[i].tick then
+      table.insert(pts, i, obj { tick = tick, pitchBend = math.floor(bend + 0.5), volume = math.floor(vol + 0.5) })
+      return i
+    end
+  end
+  return #pts
+end
+
+function M.setPointVolume(n, i, v)
+  n.points[i].volume = math.max(0, math.min(100, math.floor(v + 0.5)))
+end
+
+-- setPointBend bends point i of a note by semitones, as far as the range of
+-- pitches allows for every pitch of it.
+function M.setPointBend(n, i, semis, maxPitch)
+  local lo, hi = math.huge, -math.huge
+  for _, q in ipairs(n.pitches) do lo, hi = math.min(lo, q), math.max(hi, q) end
+  n.points[i].pitchBend = math.max(-lo, math.min(math.floor(semis + 0.5), maxPitch - hi))
+end
+
+-- resetPoint puts a point back: full volume and no bend at a note's ends,
+-- and a point between them taken out.
+function M.resetPoint(n, i)
+  if i > 1 and i < #n.points then
+    table.remove(n.points, i)
+  else
+    n.points[i].volume, n.points[i].pitchBend = 100, 0
+  end
+end
+
+-- flatten takes a note's shape away: two points, full volume, no bend.
+function M.flatten(n)
+  local start, stop = M.noteStart(n), M.noteEnd(n)
+  n.points = { point(start), point(stop) }
+end
+
+-- hasShape says whether a note is anything but full and straight.
+function M.hasShape(n)
+  if #n.points > 2 then return true end
+  for _, pt in ipairs(n.points) do
+    if (pt.volume or 100) ~= 100 or (pt.pitchBend or 0) ~= 0 then return true end
+  end
+  return false
+end
+
 ---------------------------------------------------------------- rows, names
 
 function M.scaleIndex(name)
@@ -427,6 +508,20 @@ end
 
 -- isKey says whether a pitch is the song's key, in any octave.
 function M.isKey(pitch) return pitch % 12 == 0 end
+
+-- scaleFrom is the pitches a keyboard row plays: count of them, the
+-- scale's notes going up from the first at or above from, so every key is
+-- in tune. A drum channel's are its drums.
+function M.scaleFrom(s, c, from, count)
+  local out = {}
+  local top = M.maxPitch(s, c)
+  local q = math.max(0, from)
+  while #out < count and q <= top do
+    if M.isDrum(s, c) or M.inScale(s, q) then out[#out + 1] = q end
+    q = q + 1
+  end
+  return out
+end
 
 ---------------------------------------------------------------- instruments
 
@@ -589,6 +684,30 @@ function M.slice(s, from, to)
     if ch.sequence[last] == 0 then
       ch.patterns[#ch.patterns + 1] = obj { notes = {} }
       ch.sequence[last] = #ch.patterns
+    end
+  end
+  return t
+end
+
+-- withMutes is the song as it is heard with some channels silenced: muted
+-- ones, or all but the soloed ones when any are. A silenced channel plays
+-- an empty pattern where it played one, so the song is as long as before.
+function M.withMutes(s, muted, soloed)
+  local anySolo = false
+  for c in pairs(soloed or {}) do if soloed[c] then anySolo = true end end
+  local quiet = {}
+  for c = 1, #s.channels do
+    quiet[c] = (muted and muted[c]) or (anySolo and not soloed[c])
+  end
+  local any = false
+  for c = 1, #s.channels do if quiet[c] then any = true end end
+  if not any then return s end
+  local t = json.copy(s)
+  for c, ch in ipairs(t.channels) do
+    if quiet[c] then
+      ch.patterns[#ch.patterns + 1] = obj { notes = {} }
+      local empty = #ch.patterns
+      for b, n in ipairs(ch.sequence) do if n > 0 then ch.sequence[b] = empty end end
     end
   end
   return t

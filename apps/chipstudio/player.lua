@@ -8,6 +8,7 @@
 --   p:changed(song)                    -- after an edit: heard from the next time round
 --   local at = p:update()             -- from a timer: { bar = 3, tick = 5.5 } or nil
 --   p:note(song, channel, pitch)      -- one note, as it is placed
+--   p.prepare = function(s) ... end   -- the song as it is to be heard: mutes
 --
 -- An edit made while it plays is rendered again; the new sound goes in at
 -- the same place when the song is as long as before, and at the end of the
@@ -23,9 +24,10 @@ function M.new(deps)
     version = 0, job = nil, voice = nil, mode = nil }, M)
 end
 
--- what is the song to render for what is being played: all of it, or the
--- bar alone.
+-- what is the song to render for what is being played: as it is to be
+-- heard (prepare, when set, silences channels), all of it or the bar alone.
 local function what(self, s)
+  if self.prepare then s = self.prepare(s) end
   if self.mode.bar then return songs.slice(s, self.mode.bar, self.mode.bar) end
   return s
 end

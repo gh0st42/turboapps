@@ -7,7 +7,7 @@ on any platform.
 
 | App | What it is |
 |-----|------------|
-| [chipstudio](apps/chipstudio) | Chiptune music, made as easily as it can be: a grid of channels against bars to pick a bar, and a piano roll with rows only for the notes of the song's scale, so whatever goes down fits. Notes sound as they are placed; a click inside a note makes a chord. Space plays from the bar picked, round again, or that bar alone while you work on it, and an edit is heard the next time round. Sounds are BeepBox's 176 named instruments, heard as they are picked. Songs are BeepBox's own JSON, so they go back and forth with [BeepBox](https://www.beepbox.co) and fz's music editor; inside an fz project they are kept in `assets/bgm`, and Export WAV writes the sound a game plays. |
+| [chipstudio](apps/chipstudio) | Chiptune music, made as easily as it can be: a grid of channels against bars to pick a bar, and a piano roll with rows only for the notes of the song's scale, so whatever goes down fits. Notes sound as they are placed; a click inside a note makes a chord. Space plays from the bar picked, round again, or that bar alone while you work on it, and an edit is heard the next time round. Sounds are BeepBox's 176 named instruments, heard as they are picked. Songs are BeepBox's own JSON, so they go back and forth with [BeepBox](https://www.beepbox.co) and fz's music editor; inside an fz project they are kept in `assets/bgm`, and Export WAV writes the sound a game plays, or Export OGG a smaller one when ffmpeg is installed. |
 | [calculator](apps/calculator) | A standard calculator: memory, %, √, 1/x, x², a history you can recall from, copy and paste, and the keyboard. |
 | [microbrowser](apps/microbrowser) | A browser for the small internet: Gemini capsules and Gopher holes, in tabs, each with its own back and forward. Gemini pages are shown with their headings, lists, quotes and preformatted text, Gopher menus with what each item is; searches and input are asked for, pictures shown, other files saved. Bookmarks are in their menu and on the start page, and a dialog sorts them. A capsule's certificate is trusted the first time it is seen and checked after. Pages load a step at a time from a timer, so the window never waits. The tabs open on closing are there next time. Pages can be drawn in a fixed font, a VGA one when one is installed (Flexi IBM VGA, Perfect DOS VGA 437), and in a terminal's 16 EGA colours. |
 | [microreader](apps/microreader) | A notebook from micronotes read as a book or a help file, never changed, as Windows' help and docsets were: contents, an index of every page and heading, a search that ranks the pages, back, forward, home and the pages before and after. A number at the start of a name orders it and is not shown. `tlua microreader.ztl manual.znb "Page#heading"` opens it at a topic, as a program opens its help. |
@@ -37,9 +37,10 @@ on a Tree say where they landed. Microsheets saves charts as PNG with
 `canvas:snapshot`. Microbrowser needs 0.6.3 or later, whose TLS reads
 what has come without waiting, whose coroutines outlive the chunk that
 made them, and whose MarkdownView draws in any installed font and in
-colours of the program's. ChipStudio needs the tlua after 0.6.3, whose
-`beepbox` module renders BeepBox songs with fz's synthesiser and whose
-`audio` module plays them. Pixel uses the `png` module and sharp scaling, and files
+colours of the program's. ChipStudio needs 0.7.1 or later:
+its `beepbox` module renders BeepBox songs with fz's synthesiser, its
+`audio` module plays them, and a form's `onKeyPreview` lets Space play and
+stop whatever has the focus. Pixel uses the `png` module and sharp scaling, and files
 its context menus. The Makefile uses `../tlua/bin/tlua` when it has been built,
 and `tlua` on PATH otherwise. `make TLUA=/path/to/tlua` picks another.
 

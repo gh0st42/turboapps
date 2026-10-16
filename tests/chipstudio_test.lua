@@ -200,6 +200,114 @@ test("a bar alone, for playing over and over", function()
   eq(songs.lastBar(quiet), 1, "an empty bar still plays for its length")
 end)
 
+test("a note's shape: volume and bends between its points", function()
+  local s = songs.new()
+  local p = songs.ensurePattern(s, 1, 1)
+  local n = songs.addNote(s, p, 48, 0, 8)
+  ok(not songs.hasShape(n))
+  eq(songs.pointFor(n, 0), 1); eq(songs.pointFor(n, 7), 2, "next to the end: the end")
+  local mid = songs.pointFor(n, 4)
+  eq(mid, 2); eq(#n.points, 3); eq(n.points[2].tick, 4)
+  ok(not songs.hasShape(n) or #n.points == 3)
+  songs.setPointVolume(n, 3, 0)
+  local vol = songs.shapeAt(n, 6)
+  eq(vol, 50, "halfway to silence")
+  songs.setPointVolume(n, 1, 150); eq(n.points[1].volume, 100, "held to 100")
+  songs.setPointBend(n, 3, 5, beepbox.maxPitch)
+  local _, bend = songs.shapeAt(n, 6)
+  eq(bend, 2.5)
+  songs.setPointBend(n, 3, 99, beepbox.maxPitch)
+  eq(n.points[3].pitchBend, beepbox.maxPitch - 48, "not past the top")
+  ok(songs.hasShape(n))
+  songs.resetPoint(n, 2); eq(#n.points, 2, "a point between taken out")
+  songs.resetPoint(n, 2); eq(n.points[2].volume, 100); eq(n.points[2].pitchBend, 0)
+  songs.setPointVolume(n, 1, 30)
+  songs.flatten(n)
+  ok(not songs.hasShape(n)); eq(songs.noteEnd(n), 8)
+  -- BeepBox reads it back as it was written.
+  local again = songs.decode(songs.encode(s))
+  eq(#songs.patternAt(again, 1, 1).notes[1].points, 2)
+end)
+
+test("the keyboard plays the scale, and mutes keep the song's length", function()
+  local s = songs.new() -- C major
+  local row = songs.scaleFrom(s, 1, 36, 10)
+  eq(#row, 10); eq(row[1], 36); eq(row[2], 38); eq(row[8], 48, "an octave up after seven")
+  s.scale = "easy :)"
+  eq(songs.scaleFrom(s, 1, 36, 6)[6], 48, "five to the octave")
+  eq(songs.scaleFrom(s, 4, 0, 10)[10], 9, "drums: one each")
+  songs.addNote(s, songs.ensurePattern(s, 1, 1), 48, 0, 4)
+  songs.addNote(s, songs.ensurePattern(s, 2, 3), 40, 0, 4)
+  eq(songs.withMutes(s, {}, {}), s, "nothing silenced: the song itself")
+  local quiet = songs.withMutes(s, { [1] = true }, {})
+  local seq = quiet.channels[1].sequence
+  eq(#bar(quiet, 1, 1).notes, 0, "a muted channel plays an empty pattern")
+  eq(songs.lastBar(quiet), songs.lastBar(s), "as long as before")
+  eq(#bar(s, 1, 1).notes, 1, "the song itself is untouched")
+  local alone = songs.withMutes(s, {}, { [2] = true })
+  eq(#bar(alone, 1, 1).notes, 0); eq(#bar(alone, 2, 3).notes, 1)
+  ok(seq[1] > 0)
+end)
+
+---------------------------------------------------------------- export
+
+local exporter = require "export"
+
+-- runNow is a spawn that runs a program there and then, as a test can;
+-- gui.spawn calls back from the event loop, which a test has not got.
+local function runNow(opts)
+  local args = {}
+  for i, a in ipairs(opts) do args[i] = "'" .. a:gsub("'", "'\\''") .. "'" end
+  local r = os.execute(table.concat(args, " ") .. " 2>/dev/null")
+  local code = (r == true or r == 0) and 0 or 1
+  opts.onExit(code)
+end
+
+test("Ogg export: libvorbis first, then ffmpeg's own encoder", function()
+  local cmds = exporter.oggCommands("ffmpeg", "in.wav", "out.ogg")
+  eq(#cmds, 2)
+  eq(table.concat(cmds[1], " "), "ffmpeg -y -hide_banner -loglevel error -i in.wav -c:a libvorbis -q:a 5 out.ogg")
+  ok(table.concat(cmds[2], " "):find("%-c:a vorbis %-strict %-2"), table.concat(cmds[2], " "))
+  ok(exporter.which("sh"), "sh is on the PATH"); eq(exporter.which("no-such-program-here"), nil)
+  -- A stand-in ffmpeg that has no libvorbis.
+  local ran = {}
+  local spawn = function(opts)
+    ran[#ran + 1] = opts[9]
+    if opts[9] == "libvorbis" then
+      opts.onOutput("Unknown encoder 'libvorbis'", "stderr")
+      opts.onExit(1)
+    else
+      local f = io.open(opts[#opts], "wb") f:write("OggS") f:close()
+      opts.onExit(0)
+    end
+  end
+  local sound = beepbox.render(songs.encode(songs.new(), true))
+  local result
+  exporter.ogg(spawn, "ffmpeg", sound, root .. "/fake.ogg", function(ok2, why) result = { ok2, why } end)
+  eq(result[1], true); eq(table.concat(ran, ","), "libvorbis,vorbis")
+  -- When nothing works, it says what ffmpeg said.
+  exporter.ogg(function(opts) opts.onOutput("no good", "stderr") opts.onExit(1) end, "ffmpeg", sound,
+    root .. "/never.ogg", function(ok2, why) result = { ok2, why } end)
+  eq(result[1], false); ok(result[2]:find("no good"))
+  -- A spawn that cannot start at all.
+  exporter.ogg(function() error("no such program") end, "ffmpeg", sound, root .. "/never.ogg",
+    function(ok2, why) result = { ok2, why } end)
+  eq(result[1], false); ok(result[2]:find("no such program"))
+end)
+
+test("Ogg export through the real ffmpeg, when it is here", function()
+  local ffmpeg = exporter.which("ffmpeg")
+  if not ffmpeg then return end
+  local s = songs.new()
+  songs.addNote(s, songs.ensurePattern(s, 1, 1), 48, 0, 8)
+  local sound = beepbox.render(songs.encode(songs.slice(s, 1, 1), true))
+  local result
+  exporter.ogg(runNow, ffmpeg, sound, root .. "/real.ogg", function(ok2, why) result = { ok2, why } end)
+  ok(result[1], tostring(result[2]))
+  local head = io.open(root .. "/real.ogg", "rb"):read(4)
+  eq(head, "OggS")
+end)
+
 ---------------------------------------------------------------- the player
 
 -- Stand-ins for the synthesiser and the speakers: a render is done when the
@@ -305,7 +413,7 @@ end
 test("form: starts with a song to play", function()
   local st = state()
   eq(#st.song.channels, 4); eq(st.channel, 1); eq(st.bar, 1)
-  ok(frm.lblBar.caption:find("plays nothing yet"), frm.lblBar.caption)
+  ok(frm.lblBar.caption:find("nothing yet"), frm.lblBar.caption); eq(frm.spnPattern.value, 0)
   eq(frm.cboScale.items[frm.cboScale.selected], "Major"); eq(frm.cboKey.items[frm.cboKey.selected], "C")
   eq(frm.lstPresets.items[frm.lstPresets.selected], "square lead")
   eq(frm.cboCategory.items[frm.cboCategory.selected], "Retro")
@@ -330,7 +438,7 @@ test("form: notes go down with the mouse, and undo takes them back", function()
   roll:fire("onEdited")
   roll:fire("onEditDone")
   ok(state().dirty)
-  ok(frm.lblBar.caption:find("pattern 1"), frm.lblBar.caption)
+  eq(frm.spnPattern.value, 1, "the bar plays pattern 1 now")
   roll:fire("onNote", 48)
   eq(f.notes[#f.notes].pitch, 48)
   frm.undo()
@@ -381,13 +489,31 @@ test("form: the roll's mouse puts a note down and takes it away", function()
   eq(#songs.patternAt(state().song, 2, 4).notes, 1)
 end)
 
+test("form: a click puts down one step; Space plays wherever the focus is", function()
+  frm.pick(2, 5)
+  roll:reveal()
+  roll:snapshot()
+  local x, y = roll:pointOf(38, 3)
+  roll:fire("onMouseDown", x, y, 1, false)
+  roll:fire("onMouseUp", x, y)
+  local p = songs.patternAt(state().song, 2, 5)
+  eq(#p.notes, 1)
+  eq(songs.noteStart(p.notes[1]), 3); eq(songs.noteEnd(p.notes[1]), 4, "a single step")
+  -- Space, seen before a focused control can take it.
+  eq(frm:fire("onKeyPreview", "Space", " "), true)
+  ok(frm.player:playing())
+  eq(frm:fire("onKeyPreview", "Space", " "), true)
+  ok(not frm.player:playing())
+  eq(frm:fire("onKeyPreview", "a", "a"), nil, "other keys go on to the control")
+end)
+
 test("form: bars, patterns and the toolbar", function()
   frm.pick(1, 2)
   frm.actions.mnuDuplicate()
   local st = state()
   eq(st.bar, 3); eq(songs.bars(st.song), 9)
   eq(st.song.channels[1].sequence[3], st.song.channels[1].sequence[2])
-  ok(frm.lblBar.caption:find("also plays in bar 2"), frm.lblBar.caption)
+  ok(frm.lblBar.caption:find("also in bar 2"), frm.lblBar.caption)
   eq(frm.cmdUnique.enabled, true)
   frm.cmdUnique:fire("onClick")
   eq(frm.cmdUnique.enabled, false)
@@ -409,6 +535,38 @@ test("form: bars, patterns and the toolbar", function()
   eq(state().song.scale, "easy :)")
   frm.cboKey.selected = 3; frm.cboKey:fire("onChange")
   eq(state().song.key, "D")
+end)
+
+test("form: a pattern played again in a later bar is the same pattern", function()
+  local C = 3 -- the bass, which nothing before has touched
+  frm.pick(C, 1)
+  local s = state().song
+  local first = select(2, songs.ensurePattern(s, C, 1))
+  songs.addNote(s, songs.patternAt(s, C, 1), 24, 0, 4)
+  local count = #s.channels[C].patterns
+  -- Bar 4, stepped to bar 1's pattern with the stepper.
+  frm.pick(C, 4)
+  eq(frm.spnPattern.value, 0); eq(frm.spnPattern.max, count + 1, "none, the patterns there are, or a new one")
+  frm.spnPattern.value = first; frm.spnPattern:fire("onChange")
+  s = state().song
+  eq(s.channels[C].sequence[4], first)
+  ok(frm.lblBar.caption:find("also in bar 1"), frm.lblBar.caption)
+  -- A change in bar 4 is a change in bar 1: one pattern.
+  songs.addNote(s, songs.patternAt(s, C, 4), 31, 8, 4)
+  eq(#songs.patternAt(s, C, 1).notes, 2)
+  -- [ and ] step it; one past the last is a new, empty pattern.
+  frm.spnPattern.value = count; frm.spnPattern:fire("onChange")
+  frm:fire("onKey", "]")
+  eq(state().song.channels[C].sequence[4], count + 1)
+  eq(#songs.patternAt(state().song, C, 4).notes, 0, "a new one")
+  frm:fire("onKey", "[")
+  eq(state().song.channels[C].sequence[4], count)
+  for _ = 1, count + 2 do frm:fire("onKey", "[") end
+  eq(state().song.channels[C].sequence[4], 0, "none, and no lower")
+  -- Stepping through numbers is one undo for the bar (the note above went
+  -- in behind the form's back, so it did not end the run).
+  frm.undo()
+  eq(state().song.channels[C].sequence[4], 0, "back to before the stepping")
 end)
 
 test("form: a sound for the channel, and its volume", function()
@@ -467,6 +625,129 @@ test("form: save, open and export", function()
   local bad = io.open(root .. "/bad.json", "w") bad:write('{"format":"x"}') bad:close()
   eq(frm.load(root .. "/bad.json"), false)
   eq(state().path, root .. "/tune.json")
+end)
+
+test("form: volume and bends are dragged on a note", function()
+  frm.pick(1, 6)
+  local s = state().song
+  local p = songs.ensurePattern(s, 1, 6)
+  local n = songs.addNote(s, p, 36, 0, 8)
+  roll:reveal()
+  roll:snapshot()
+  frm.setMode("volume")
+  eq(roll.mode, "volume"); ok(frm.optVolume.checked and not frm.optNotes.checked)
+  -- Its end, dragged down: a fade.
+  local x, y = roll:pointOf(36, 7)
+  roll:fire("onMouseDown", x, y, 1, false)
+  roll:fire("onMouseDrag", x, y + 40)
+  roll:fire("onMouseUp", x, y + 40)
+  ok(n.points[#n.points].volume < 100, "quieter at the end: " .. n.points[#n.points].volume)
+  eq(#p.notes, 1, "a note is not put down in volume mode")
+  -- In the middle: a point of its own.
+  local mx, my = roll:pointOf(36, 4)
+  roll:fire("onMouseDown", mx, my, 1, false)
+  roll:fire("onMouseUp", mx, my)
+  eq(#n.points, 3)
+  roll:fire("onMouseDown", mx, my, 3, false)
+  eq(#n.points, 2, "a right click takes it out again")
+  -- A bend: the end dragged up a row, to the next note of the scale.
+  frm.setMode("bend")
+  local bx, by = roll:pointOf(36, 7)
+  local _, upY = roll:pointOf(38, 7)
+  roll:fire("onMouseDown", bx, by, 1, false)
+  roll:fire("onMouseDrag", bx, upY)
+  roll:fire("onMouseUp", bx, upY)
+  eq(n.points[#n.points].pitchBend, 2)
+  roll:snapshot() -- drawn with its shape
+  frm.actions.mnuFlatten()
+  ok(not songs.hasShape(songs.patternAt(state().song, 1, 6).notes[1]))
+  frm.setMode("notes")
+end)
+
+test("form: the keyboard plays and records the scale", function()
+  frm.pick(1, 7)
+  local heard = #f.notes
+  -- Not recording: it only plays.
+  ok(frm.playKey("z"))
+  eq(#f.notes, heard + 1); eq(f.notes[#f.notes].pitch, 48, "the lead's octave: C4")
+  eq(songs.patternAt(state().song, 1, 7), nil)
+  eq(frm.playKey("1"), false, "not a key of the keyboard")
+  -- Recording, stopped: one note after another, from the cursor.
+  frm.actions.mnuRecord()
+  ok(frm.chkRecord.checked); eq(roll.cursorTick, 0)
+  frm:fire("onKey", "z"); frm:fire("onKey", "x"); frm:fire("onKey", "q")
+  local p = songs.patternAt(state().song, 1, 7)
+  eq(#p.notes, 3)
+  eq(p.notes[1].pitches[1], 48); eq(p.notes[2].pitches[1], 50); eq(p.notes[3].pitches[1], 60)
+  eq(songs.noteStart(p.notes[3]), 8, "a beat each"); eq(frm.cursor(), 12)
+  frm:fire("onKey", "c")
+  eq(state().bar, 8, "the end of the bar: on to the next")
+  eq(frm.cursor(), 0)
+  -- The octave moves.
+  frm:fire("onKey", "=")
+  eq(frm.lblKeys.caption, "Keys from " .. songs.pitchName(state().song, 1, 60), "an octave up")
+  frm:fire("onKey", "-")
+  -- Recording while it plays: at the playhead.
+  frm.pick(1, 7)
+  frm.chkBarOnly.checked = true
+  frm.togglePlay()
+  f.jobs[#f.jobs].finished = true
+  frm.tick()
+  f.voices[#f.voices].at = 1.0 -- two beats in: tick 8
+  frm.tick()
+  eq(roll.cursorTick, nil, "no cursor while it plays")
+  frm:fire("onKey", "e")
+  local after = songs.patternAt(state().song, 1, 7)
+  local found
+  for _, n in ipairs(after.notes) do
+    for _, q in ipairs(n.pitches) do
+      if q == 64 and songs.noteStart(n) <= 8 and songs.noteEnd(n) > 8 then found = true end
+    end
+  end
+  ok(found, "written at the playhead, tick 8")
+  frm.togglePlay()
+  frm.chkBarOnly.checked = false
+  frm.actions.mnuRecord()
+  ok(not frm.chkRecord.checked)
+end)
+
+test("form: mute and solo", function()
+  frm.pick(1, 1)
+  grid:snapshot()
+  local mx, my = grid:boxOf(2, "mute")
+  grid:fire("onMouseDown", mx, my, 1, false)
+  local muted, soloed = frm.mutes()
+  ok(muted[2]); eq(state().channel, 1, "a click on M does not pick the channel")
+  local sx, sy = grid:boxOf(3, "solo")
+  grid:fire("onMouseDown", sx, sy, 1, false)
+  ok(soloed[3])
+  -- What plays is the song as heard.
+  frm.togglePlay()
+  local sent = json.decode(f.jobs[#f.jobs].text)
+  local function plays(c)
+    for _, n in ipairs(sent.channels[c].sequence) do
+      if n > 0 and #sent.channels[c].patterns[n].notes > 0 then return true end
+    end
+    return false
+  end
+  ok(not plays(1), "the lead is silent while another plays alone")
+  frm.togglePlay()
+  grid:fire("onMouseDown", mx, my, 1, false)
+  grid:fire("onMouseDown", sx, sy, 1, false)
+  muted, soloed = frm.mutes()
+  ok(not muted[2] and not soloed[3])
+  grid:snapshot()
+end)
+
+test("form: Export OGG, when ffmpeg is here", function()
+  if not exporter.which("ffmpeg") then return end
+  local realSpawn = gui.spawn
+  gui.spawn = runNow
+  saveAs = root .. "/tune.ogg"
+  frm.exportOgg()
+  gui.spawn = realSpawn
+  eq(io.open(root .. "/tune.ogg", "rb"):read(4), "OggS")
+  ok(frm.lblStatus.caption:find("Exported"), frm.lblStatus.caption)
 end)
 
 test("form: changes not saved are asked about", function()

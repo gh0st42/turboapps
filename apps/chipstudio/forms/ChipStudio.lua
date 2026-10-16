@@ -10,6 +10,7 @@ local lfs = require "lfs"
 local beepbox = require "beepbox"
 local audio = require "audio"
 local songs = require "song"
+local exporter = require "export"
 local player = require "player"
 local help = require "forms.Help"
 local settingsStore = require "settings"
@@ -27,8 +28,13 @@ local clip            -- a bar copied: its notes
 local quiet = false   -- the controls are being filled, not changed by the user
 local timer
 local soundOK, soundWhy = true, nil
+local muted, soloed = {}, {}   -- channels silenced, and played alone
+local cursor = 0               -- where the next note played on the keyboard goes, stopped
+local octave = {}              -- by channel: how far the keyboard is moved, in octaves
+local lastAt                   -- where playing had got to, the last time it was looked at
 
 local play = player.new { beepbox = beepbox, audio = audio }
+play.prepare = function(s) return songs.withMutes(s, muted, soloed) end
 
 local settings = settingsStore.load()
 
@@ -75,21 +81,25 @@ local function updateInfo()
   local text = ("Bar %d · %s"):format(bar, songs.channelLabel(song, channel))
   local shared = songs.sharedBars(song, channel, bar)
   if not p then
-    text = text .. " · plays nothing yet: click in the roll to start"
+    text = text .. " · nothing yet: click in the roll, or pick a pattern"
   else
-    text = text .. (" · pattern %d"):format(n)
     if #shared > 0 then
       local list = {}
       for i, b in ipairs(shared) do
         if i > 6 then list[#list + 1] = "…" break end
         list[#list + 1] = tostring(b)
       end
-      text = text .. " · also plays in bar" .. (#shared > 1 and "s " or " ") .. table.concat(list, ", ")
-        .. ", so a change here changes " .. (#shared > 1 and "them" or "it") .. " too"
+      text = text .. " · also in bar" .. (#shared > 1 and "s " or " ") .. table.concat(list, ", ")
+        .. ", which change with it"
     end
   end
   frm.lblBar.caption = text
   frm.cmdUnique.enabled = #shared > 0
+  -- The pattern stepper: none, the patterns there are, and one more, new.
+  quiet = true
+  frm.spnPattern.max = #ch.patterns + 1
+  frm.spnPattern.value = ch.sequence[bar] or 0
+  quiet = false
   frm.lblInstrument.caption = (ch and ch.type == "drum" and "Drum sound" or "Instrument") .. " · "
     .. songs.channelLabel(song, channel)
 end
@@ -137,17 +147,36 @@ local function updatePlayButtons()
   frm.cmdStop.visible = on
 end
 
+-- keyboardBase is the lowest pitch the keyboard's bottom row plays on
+-- channel c: its octave, moved as the user moved it.
+local function keyboardBase(c)
+  if songs.isDrum(song, c) then return 0 end
+  local ch = song.channels[c]
+  local base = ((tonumber(ch and ch.octaveScrollBar) or 3) + (octave[c] or 0)) * 12
+  return math.max(0, math.min(base, beepbox.maxPitch - 12))
+end
+
+local function updateKeys()
+  if songs.isDrum(song, channel) then
+    frm.lblKeys.caption = "Keys: drums"
+  else
+    frm.lblKeys.caption = "Keys from " .. songs.pitchName(song, channel, keyboardBase(channel))
+  end
+  roll.cursorTick = (frm.chkRecord.checked and not play:playing()) and cursor or nil
+end
+
 -- show puts everything on screen as the song is.
 local function show(reveal)
   bar = math.max(1, math.min(bar, songs.bars(song)))
   channel = math.max(1, math.min(channel, #song.channels))
   grid.song, grid.channel, grid.bar = song, channel, bar
+  grid.muted, grid.soloed = muted, soloed
   roll.song, roll.channel, roll.bar = song, channel, bar
-  roll.length = LENGTHS[frm.cboLength.selected > 0 and frm.cboLength.selected or 3][2]()
   updateToolbar()
   updateInfo()
   updateInstrument()
   updateTitle()
+  updateKeys()
   grid:changed()
   roll:changed()
   if reveal then roll:reveal() end
@@ -156,6 +185,7 @@ end
 -- pick goes to bar b of channel c.
 local function pick(c, b)
   local channelChanged = c ~= channel
+  if c ~= channel or b ~= bar then cursor = 0 end
   channel, bar = c, b
   show(true)
   if channelChanged then lastKind = nil end
@@ -206,6 +236,10 @@ function roll:onEditDone()
   play:changed(song)
 end
 
+function roll:onHint(text)
+  status(text or "")
+end
+
 function roll:onNote(pitch)
   if soundOK then play:note(song, channel, pitch) end
 end
@@ -214,9 +248,45 @@ end
 
 function grid:onPick(c, b) pick(c, b) end
 
-local function setPatternHere(n)
-  change(function(s) songs.setPattern(s, channel, bar, n) end)
-  status(n == 0 and "This bar plays nothing on this channel" or ("This bar plays pattern %d"):format(n))
+local function setPatternHere(n, kind)
+  local ch = song.channels[channel]
+  n = math.max(0, math.min(n, #ch.patterns + 1))
+  local new = n > #ch.patterns
+  change(function(s) songs.setPattern(s, channel, bar, n) end, kind)
+  if n == 0 then
+    status("This bar plays nothing on this channel")
+  else
+    local others = #songs.sharedBars(song, channel, bar)
+    status(("This bar plays pattern %d%s"):format(n, new and ", a new one"
+      or others > 0 and (", as %d other bar%s do%s: a change to one is a change to all"):format(others,
+        others > 1 and "s" or "", others > 1 and "" or "es") or ""))
+  end
+end
+
+-- stepPattern moves the bar on to the next pattern number, or back.
+local function stepPattern(by)
+  setPatternHere((song.channels[channel].sequence[bar] or 0) + by, "pattern" .. channel .. ":" .. bar)
+end
+
+function frm.spnPattern:onChange()
+  if quiet then return end
+  setPatternHere(math.floor(self.value), "pattern" .. channel .. ":" .. bar)
+end
+
+function grid:onMute(c)
+  muted[c] = not muted[c] or nil
+  grid:changed()
+  play:changed(song)
+  status(songs.channelLabel(song, c) .. (muted[c] and " is muted" or " is heard again"))
+end
+
+function grid:onSolo(c)
+  soloed[c] = not soloed[c] or nil
+  grid:changed()
+  play:changed(song)
+  local any = next(soloed) ~= nil
+  status(soloed[c] and (songs.channelLabel(song, c) .. " plays alone" .. (#song.channels > 1 and "; S on others adds them" or ""))
+    or (any and "Fewer channels play alone" or "Every channel is heard again"))
 end
 
 local barMenu -- below
@@ -277,7 +347,14 @@ local function pasteBar()
   status("Pasted into bar " .. bar)
 end
 
+-- forgetMutes lets every channel be heard again: after channels came or
+-- went, the numbers no longer mean the same ones.
+local function forgetMutes()
+  muted, soloed = {}, {}
+end
+
 local function addChannel(kind)
+  forgetMutes()
   local at
   change(function(s) at = songs.addChannel(s, kind) end)
   if not at then
@@ -297,6 +374,7 @@ local function removeChannel()
   if #song.channels <= 1 then return end
   if gui.msgbox(("Remove %s and everything it plays?"):format(songs.channelLabel(song, channel)),
     "yesno", "Remove Channel") ~= "yes" then return end
+  forgetMutes()
   change(function(s) songs.removeChannel(s, channel) end)
 end
 
@@ -350,9 +428,11 @@ end
 local function stop()
   play:stop()
   stopTimer()
+  lastAt = nil
   grid.playBar = nil
   roll.playTick = nil
   updatePlayButtons()
+  updateKeys()
 end
 
 local function tick()
@@ -362,6 +442,7 @@ local function tick()
     stop()
     return false
   end
+  lastAt = at
   if grid.playBar ~= at.bar then grid.playBar = at.bar end
   roll.playTick = (at.bar == bar and not at.waiting) and at.tick or nil
   return true
@@ -379,6 +460,7 @@ local function startPlaying(from)
     play:play(song, { from = from or bar })
   end
   updatePlayButtons()
+  updateKeys()
   stopTimer()
   timer = gui.every(1 / 30, tick)
 end
@@ -433,9 +515,9 @@ function frm.cboScale:onChange()
   change(function(s) s.scale = sc end)
 end
 
-function frm.cboLength:onChange()
-  if quiet then return end
-  roll.length = LENGTHS[self.selected > 0 and self.selected or 3][2]()
+-- keyLength is how long a note the keyboard writes is, in ticks.
+local function keyLength()
+  return LENGTHS[frm.cboLength.selected > 0 and frm.cboLength.selected or 3][2]()
 end
 
 frm.cmdUnique.onClick = function() makeUnique() end
@@ -474,6 +556,110 @@ function frm.sldVolume:onChange()
   change(function(s) songs.setVolume(s, channel, v) end, "volume" .. channel)
 end
 
+---------------------------------------------------------------- what a drag does
+
+local MODES = { notes = "optNotes", volume = "optVolume", bend = "optBend" }
+
+local function setMode(mode)
+  roll.mode = mode
+  for m, name in pairs(MODES) do frm[name].checked = m == mode end
+  status(({ notes = "Notes: click to put one down, drag to move and stretch",
+    volume = "Volume: drag a note up or down, at its start, its end or in between",
+    bend = "Bend: drag a note to the note it should slide to" })[mode])
+end
+
+for mode, name in pairs(MODES) do
+  frm[name].onChange = function(self) if self.checked then setMode(mode) end end
+end
+
+local function flattenBar()
+  local p = songs.patternAt(song, channel, bar)
+  if not p then return end
+  change(function() for _, n in ipairs(p.notes) do songs.flatten(n) end end)
+  status("The notes of bar " .. bar .. " are full and straight again")
+end
+
+---------------------------------------------------------------- the keyboard
+
+-- The two rows of letters play the scale's notes, the bottom row from the
+-- keyboard's octave and the top one an octave up, so every key is in tune.
+local LOWER = { "z", "x", "c", "v", "b", "n", "m", ",", ".", "/" }
+local UPPER = { "q", "w", "e", "r", "t", "y", "u", "i", "o", "p" }
+
+-- pitchOfKey is the pitch a key plays on the channel picked, or nil.
+local function pitchOfKey(key)
+  local k = key:lower()
+  local row, from
+  for i, name in ipairs(LOWER) do if name == k then row, from = i, keyboardBase(channel) end end
+  for i, name in ipairs(UPPER) do
+    if name == k then row, from = i, keyboardBase(channel) + (songs.isDrum(song, channel) and 2 or 12) end
+  end
+  if not row then return nil end
+  return songs.scaleFrom(song, channel, from, #LOWER)[row]
+end
+
+local function moveOctave(by)
+  if songs.isDrum(song, channel) then return end
+  local was = keyboardBase(channel)
+  octave[channel] = (octave[channel] or 0) + by
+  if keyboardBase(channel) == was then octave[channel] = octave[channel] - by end
+  updateKeys()
+  status("The keyboard plays from " .. songs.pitchName(song, channel, keyboardBase(channel)))
+end
+
+-- record writes a note played on the keyboard into the song: at the
+-- playhead, to the nearest note's length, while it plays; else at the
+-- cursor, which then moves on by a note, to the next bar at the end of one.
+local function record(pitch)
+  local L = math.max(1, keyLength())
+  local ticks = songs.barTicks(song)
+  local b, tk
+  if play:playing() and lastAt and not lastAt.waiting then
+    b = lastAt.bar
+    tk = math.floor(lastAt.tick / L + 0.5) * L
+    if tk >= ticks then
+      if b < songs.bars(song) and not frm.chkBarOnly.checked then b, tk = b + 1, 0 else tk = ticks - L end
+    end
+  else
+    b, tk = bar, cursor
+  end
+  local placed
+  change(function(s)
+    local p = songs.ensurePattern(s, channel, b)
+    placed = songs.addNote(s, p, pitch, math.max(0, tk), L)
+  end)
+  if not play:playing() then
+    cursor = tk + L
+    if cursor >= ticks then
+      if bar < songs.bars(song) then
+        pick(channel, bar + 1)
+        cursor = 0
+      else
+        cursor = 0
+        status("That was the end of the song; the next note goes at the start of this bar")
+      end
+    end
+    updateKeys()
+  end
+  if not placed then status("No room for a note there") end
+end
+
+local function playKey(key)
+  local pitch = pitchOfKey(key)
+  if not pitch then return false end
+  if soundOK then play:note(song, channel, pitch) end
+  if frm.chkRecord.checked then record(pitch) end
+  return true
+end
+
+function frm.chkRecord:onChange()
+  setChecked("mnuRecord", self.checked)
+  cursor = 0
+  updateKeys()
+  status(self.checked and "Recording: the keys write notes into " .. songs.channelLabel(song, channel)
+    or "The keys only play now")
+end
+
 ---------------------------------------------------------------- files
 
 local function startDir()
@@ -502,6 +688,8 @@ local function load(p)
   if not s then gui.msgbox("Cannot open " .. p .. ".\n\n" .. tostring(why), "ok", "Open") return false end
   stop()
   song, path, dirty, lastKind = s, p, false, nil
+  forgetMutes()
+  octave, cursor = {}, 0
   history:clear()
   channel, bar = 1, 1
   settings.last = p
@@ -549,6 +737,8 @@ local function newSong()
   if keepChanges() then return end
   stop()
   song, path, dirty, lastKind = songs.new(), nil, false, nil
+  forgetMutes()
+  octave, cursor = {}, 0
   history:clear()
   channel, bar = 1, 1
   show(true)
@@ -571,11 +761,38 @@ local function export()
     #skipped > 0 and (" (could not play: " .. table.concat(skipped, ", ") .. ")") or ""))
 end
 
+-- exportOgg writes the song as an Ogg file, the smaller sound a game can
+-- play, through ffmpeg when it is installed.
+local function exportOgg()
+  local ffmpeg = exporter.which("ffmpeg")
+  if not ffmpeg then
+    gui.msgbox("Ogg files are made by ffmpeg, which is not installed here.\n\n"
+      .. "Install ffmpeg, or use Export WAV, which needs nothing.", "ok", "Export OGG")
+    return
+  end
+  local name = (path and path:match("([^/\\]+)%.%w+$") or "song") .. ".ogg"
+  local dir = path and path:match("^(.*)/[^/]*$") or startDir()
+  local p = gui.savefile { title = "Export OGG", dir = dir, file = name, filter = "Ogg Vorbis\t*.ogg" }
+  if not p then return end
+  if not p:match("%.[oO][gG][gG]$") then p = p .. ".ogg" end
+  local sound, skipped = beepbox.render(songs.encode(song, true))
+  if not sound then gui.msgbox("Cannot render the song.\n\n" .. tostring(skipped), "ok", "Export OGG") return end
+  status("Exporting " .. p .. "...")
+  exporter.ogg(gui.spawn, ffmpeg, sound, p, function(ok, why)
+    if ok then
+      status(("Exported %s: %.1f seconds"):format(p, sound.seconds))
+    else
+      status("Not exported")
+      gui.msgbox("ffmpeg could not make " .. p .. ".\n\n" .. tostring(why), "ok", "Export OGG")
+    end
+  end)
+end
+
 ---------------------------------------------------------------- menus and keys
 
 local actions = {
   mnuNew = newSong, mnuOpen = open, mnuSave = function() saveSong() end, mnuSaveAs = function() saveAs() end,
-  mnuExport = export, mnuExit = function() frm:close() end,
+  mnuExport = export, mnuExportOgg = exportOgg, mnuExit = function() frm:close() end,
   mnuUndo = undo, mnuRedo = redo, mnuCopy = copyBar, mnuPaste = pasteBar, mnuClear = clearBar,
   mnuUnique = makeUnique, mnuDuplicate = duplicateBar, mnuInsert = insertBar, mnuRemoveBar = removeBar,
   mnuLoopStart = function() change(function(s) songs.setLoop(s, bar, s.introBars + s.loopBars) end) end,
@@ -591,6 +808,16 @@ local actions = {
     frm.chkBarOnly.checked = not frm.chkBarOnly.checked
     frm.chkBarOnly:fire("onChange")
   end,
+  mnuModeNotes = function() setMode("notes") end,
+  mnuModeVolume = function() setMode("volume") end,
+  mnuModeBend = function() setMode("bend") end,
+  mnuFlatten = flattenBar,
+  mnuRecord = function()
+    frm.chkRecord.checked = not frm.chkRecord.checked
+    frm.chkRecord:fire("onChange")
+  end,
+  mnuOctaveUp = function() moveOctave(1) end,
+  mnuOctaveDown = function() moveOctave(-1) end,
   mnuHelp = function() help.open() end,
   mnuAbout = function()
     gui.msgbox("ChipStudio\n\nChiptune music in BeepBox's own song format, played by fz's port of\n"
@@ -604,6 +831,12 @@ function frm.Menu1:onClick(name)
 end
 
 
+-- Space plays and stops whatever has the focus: a checkbox or a button
+-- would otherwise take it as a press of its own.
+function frm:onKeyPreview(key)
+  if key == "Space" then togglePlay() return true end
+end
+
 function frm:onKey(key)
   if key == "Space" or key == " " then togglePlay() return true end
   if key == "Left" then if bar > 1 then pick(channel, bar - 1) end return true end
@@ -613,6 +846,11 @@ function frm:onKey(key)
   local digit = key:match("^(%d)$")
   if digit then setPatternHere(tonumber(digit)) return true end
   if key == "Escape" then stop() return true end
+  if key == "[" then stepPattern(-1) return true end
+  if key == "]" then stepPattern(1) return true end
+  if key == "-" then moveOctave(-1) return true end
+  if key == "=" then moveOctave(1) return true end
+  if playKey(key) then return true end
 end
 
 function frm:onClose()
@@ -652,13 +890,32 @@ gui.after(0, function()
   roll:focus()
 end)
 
+-- Without ffmpeg there is no Ogg, and the menu says why.
+if not exporter.which("ffmpeg") then
+  local items = frm.Menu1.items
+  for _, top in ipairs(items) do
+    if type(top) == "table" and type(top[2]) == "table" then
+      for _, it in ipairs(top[2]) do
+        if type(it) == "table" and it.name == "mnuExportOgg" then
+          it[1], it.enabled = "Export &OGG... (needs ffmpeg)", false
+        end
+      end
+    end
+  end
+  frm.Menu1.items = items
+end
+
 -- Exposed for the tests.
 frm.state = function() return song, channel, bar, dirty, path end
 frm.pick, frm.change, frm.undo, frm.redo = pick, change, undo, redo
-frm.load, frm.write, frm.export = load, write, export
+frm.load, frm.write, frm.export, frm.exportOgg = load, write, export, exportOgg
 frm.actions = actions
 frm.player = play
 frm.togglePlay, frm.stop = togglePlay, stop
 frm.tick = tick
+frm.playKey, frm.setMode = playKey, setMode
+frm.stepPattern = stepPattern
+frm.mutes = function() return muted, soloed end
+frm.cursor = function() return cursor end
 
 return frm

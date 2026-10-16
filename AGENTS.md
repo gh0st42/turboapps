@@ -39,6 +39,11 @@ These were agreed with the owner; keep to them.
   <pid>` lists the process's windows, and `screencapture -x -o -l<id>`
   takes the one with the app's title. If that is not possible, do not
   capture; debug through the app's output.
+- **Stop only what you started.** The owner runs these apps while you work
+  on them. Launch an app for a check with its PID kept (`cmd & pid=$!`),
+  capture and stop that PID only. Never `pkill -f`, `killall` or a
+  `pgrep | head` by name: that once closed the owner's ChipStudio with a
+  song not saved. Find the window to capture by that PID as well.
 - **Ask when a choice is the owner's** (what a feature should do, a file
   format, an app's name); decide the rest yourself and say what you chose.
 
@@ -138,14 +143,19 @@ what it is and how it is used. UI text is plain English, without jargon.
   it: TLS receives with a timeout of 0, coroutines resumed after the
   chunk that made them, fonts by their installed names with
   `gui.fonts()`, and MarkdownView's `face` and `colors`.
-- chipstudio (a chiptune editor for BeepBox songs) is new, and needs tlua's
-  `beepbox` and `audio` modules, made for it after 0.6.3 and not released
-  yet. `beepbox` is fz's synthesiser: fz's `bbx/` module
+- chipstudio (a chiptune editor for BeepBox songs) needs tlua 0.7.1: the
+  `beepbox` and `audio` modules, and a form's `onKeyPreview`, for Space to
+  play whatever has the focus. `beepbox` is fz's synthesiser: fz's `bbx/` module
   (github.com/gh0st42/fz/bbx, tagged `bbx/v0.1.0` with fz 0.8.0), which
   tlua requires. A change to the synthesiser is made in fz, tagged there,
   and taken into tlua with `go get github.com/gh0st42/fz/bbx@<tag>`. Its tests stand in for both
   modules (fakes in tests/chipstudio_test.lua), so they make no sound.
   Never play sound at full volume while trying things: volume 0, or none.
+  Done: the song grid, the piano roll with note volume and bends, the
+  keyboard as a piano that records, mute and solo, presets, undo, WAV, and
+  OGG through ffmpeg (libvorbis, else ffmpeg's own vorbis encoder).
+  Later, and optional: listing an fz project's assets/bgm songs to open by
+  name (file dialogs do for now), BeepBox share URLs.
 - files lists the drives Linux automounts (from /proc/self/mounts) and
   ejects them; it is tested against a mount table of the tests' own, and
   has not run on a Linux desktop yet.
