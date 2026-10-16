@@ -487,11 +487,18 @@ end)
 test("form: a fixed font and a terminal's colours", function()
   local look = require "look"
   local real = gui.fonts
-  gui.fonts = function() return { "sans", "serif", "mono", "Perfect DOS VGA 437 Win" } end
+  -- tlua takes only fonts that are installed, and no VGA font may be: one
+  -- that is stands in for a VGA font here.
+  local vga = "mono"
+  for _, name in ipairs(real()) do
+    if name ~= "sans" and name ~= "serif" and name ~= "mono" then vga = name break end
+  end
+  table.insert(look.VGA, 1, vga)
+  gui.fonts = function() return { "sans", "serif", "mono", vga } end
   local s = frm.settings()
   eq(view.face, ""); eq(view.colors, nil)
   frm.toggleLook("mono")
-  eq(view.face, "Perfect DOS VGA 437 Win")
+  eq(view.face, vga)
   eq(view.textSize, 16, "a VGA font at its own size")
   frm.toggleLook("terminal")
   eq(view.colors.background, "#000000"); eq(view.colors.link, look.EGA.lightCyan)
@@ -511,6 +518,7 @@ test("form: a fixed font and a terminal's colours", function()
   eq(view.face, ""); eq(view.colors, nil); eq(view.textSize, s.textSize)
   eq(checked("mnuMono"), false)
   gui.fonts = real
+  table.remove(look.VGA, 1)
 end)
 
 test("form: the tabs are kept for next time", function()
