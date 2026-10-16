@@ -33,10 +33,10 @@ tlua; `make static` has no GUI). Microword, micronotes and microreader need
 0.6.1 or later, whose MarkdownEdit edits Markdown as it looks and goes to its
 headings, whose MarkdownView takes pictures from the program, and whose drops
 on a Tree say where they landed. Microsheets saves charts as PNG with
-`canvas:snapshot`. Microbrowser needs the tlua after 0.6.2, whose TLS
-reads what has come without waiting, whose coroutines outlive the
-chunk that made them, and whose MarkdownView draws in any installed font
-and in colours of the program's. Pixel uses the `png` module and sharp scaling, and files
+`canvas:snapshot`. Microbrowser needs 0.6.3 or later, whose TLS reads
+what has come without waiting, whose coroutines outlive the chunk that
+made them, and whose MarkdownView draws in any installed font and in
+colours of the program's. Pixel uses the `png` module and sharp scaling, and files
 its context menus. The Makefile uses `../tlua/bin/tlua` when it has been built,
 and `tlua` on PATH otherwise. `make TLUA=/path/to/tlua` picks another.
 

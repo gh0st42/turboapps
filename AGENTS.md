@@ -115,7 +115,8 @@ what it is and how it is used. UI text is plain English, without jargon.
   `items` again after changing it. In a caption, `/` makes a submenu and
   `&` marks a letter.
 - A Form's `onClose` runs for the close box, Escape and `close()`.
-- Networking: LuaSocket and LuaSec (`socket`, `ssl`) come with tlua 0.6.2.
+- Networking: LuaSocket and LuaSec (`socket`, `ssl`) come with tlua 0.6.2;
+  use 0.6.3 or later, whose TLS reads with a timeout of 0 work.
   A window must never wait on the network: use `settimeout(0)` and poll
   from `gui.every` (see apps/microbrowser/net.lua).
 - Fonts: `"sans"`, `"serif"`, `"mono"`, or any installed font by name;
@@ -128,14 +129,15 @@ what it is and how it is used. UI text is plain English, without jargon.
 ## Where things stand
 
 - All apps' tests pass with `make check`.
-- microbrowser (Gemini and Gopher, tabs, bookmarks, trust on first use) is
-  new. It needs tlua 0.6.2's TLS and two tlua fixes made for it, after
-  0.6.2: a TLS receive with a timeout of 0 reads what has come
-  (internal/lualib/socket_ssl.go), and a coroutine runs under the context
-  of whoever resumes it, so one made by the main chunk survives into the
-  GUI loop (third_party/gopher-lua/coroutinelib.go). Its fixed font and
-  terminal colours need two more: fonts named by their installed names
-  everywhere a font is named, with `gui.fonts()` to list them
-  (internal/gui/fltk_fonts.go), and MarkdownView's `face` and `colors`
-  (internal/gui/lua/markdownview.lua, markdown_layout.lua,
-  markdown_render.lua).
+- desktop's `categories.lua` is the user's own setup, written from the
+  app (pixel is under Creativity there). Tests of the built-in categories
+  put them in effect themselves (`withDefaults` in tests/desktop_test.lua)
+  rather than read that file; leave its contents to the user.
+- microbrowser (Gemini and Gopher, tabs, bookmarks, trust on first use, a
+  VGA font and EGA colours) needs tlua 0.6.3, which has the fixes made for
+  it: TLS receives with a timeout of 0, coroutines resumed after the
+  chunk that made them, fonts by their installed names with
+  `gui.fonts()`, and MarkdownView's `face` and `colors`.
+- files lists the drives Linux automounts (from /proc/self/mounts) and
+  ejects them; it is tested against a mount table of the tests' own, and
+  has not run on a Linux desktop yet.
