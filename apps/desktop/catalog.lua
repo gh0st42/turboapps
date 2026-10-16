@@ -7,6 +7,7 @@ local M = {}
 local DEFAULT_CATEGORY_ORDER = { "Office", "Utilities", "Development", "Games", "Other" }
 local DEFAULT_CATEGORY_MAP = {
   calculator = "Utilities",
+  chipstudio = "Games",
   editor = "Office",
   files = "Utilities",
   microbrowser = "Utilities",

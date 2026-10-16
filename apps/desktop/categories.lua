@@ -14,6 +14,7 @@ return {
   },
   map = {
     ["calculator"] = "Utilities",
+    ["chipstudio"] = "Creativity",
     ["designer"] = "Development",
     ["desktop"] = "Utilities",
     ["editor"] = "Utilities",
