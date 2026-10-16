@@ -138,6 +138,13 @@ what it is and how it is used. UI text is plain English, without jargon.
   it: TLS receives with a timeout of 0, coroutines resumed after the
   chunk that made them, fonts by their installed names with
   `gui.fonts()`, and MarkdownView's `face` and `colors`.
+- chipstudio (a chiptune editor for BeepBox songs) is new, and needs tlua's
+  `beepbox` and `audio` modules, made for it after 0.6.3 and not released
+  yet. `beepbox` is fz's synthesiser: fz's `bbx/` module
+  (github.com/gh0st42/fz/bbx), which tlua finds through a `replace` to
+  `../friendzone/bbx` until it is published. Its tests stand in for both
+  modules (fakes in tests/chipstudio_test.lua), so they make no sound.
+  Never play sound at full volume while trying things: volume 0, or none.
 - files lists the drives Linux automounts (from /proc/self/mounts) and
   ejects them; it is tested against a mount table of the tests' own, and
   has not run on a Linux desktop yet.

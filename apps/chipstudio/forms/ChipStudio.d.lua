@@ -1,0 +1,35 @@
+---@meta
+-- What ChipStudio.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.ChipStudio: gui.Form
+---@field Menu1 gui.Menu
+---@field cboCategory gui.ComboBox
+---@field cboKey gui.ComboBox
+---@field cboLength gui.ComboBox
+---@field cboScale gui.ComboBox
+---@field chkBarOnly gui.CheckBox
+---@field chkLoop gui.CheckBox
+---@field cmdListen gui.Button
+---@field cmdPlay gui.Button
+---@field cmdStop gui.Button
+---@field cmdUnique gui.Button
+---@field grdSong gui.Object
+---@field lblBar gui.Label
+---@field lblBars gui.Label
+---@field lblBeats gui.Label
+---@field lblInstrument gui.Label
+---@field lblKey gui.Label
+---@field lblLength gui.Label
+---@field lblScale gui.Label
+---@field lblStatus gui.Label
+---@field lblTempo gui.Label
+---@field lblVolume gui.Label
+---@field lstPresets gui.ListBox
+---@field pnlBar gui.Panel
+---@field pnlInfo gui.Panel
+---@field rolNotes gui.Object
+---@field sldVolume gui.Slider
+---@field spnBars gui.Spinner
+---@field spnBeats gui.Spinner
+---@field spnTempo gui.Spinner
