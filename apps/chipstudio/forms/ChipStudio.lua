@@ -165,6 +165,17 @@ local function updateKeys()
   roll.cursorTick = (frm.chkRecord.checked and not play:playing()) and cursor or nil
 end
 
+-- unheard is the channels muted, or left out by a solo: the roll does not
+-- show their notes behind the channel's own.
+local function unheard()
+  local any = next(soloed) ~= nil
+  local out = {}
+  for c = 1, #song.channels do
+    if muted[c] or (any and not soloed[c]) then out[c] = true end
+  end
+  return out
+end
+
 -- show puts everything on screen as the song is.
 local function show(reveal)
   bar = math.max(1, math.min(bar, songs.bars(song)))
@@ -172,6 +183,7 @@ local function show(reveal)
   grid.song, grid.channel, grid.bar = song, channel, bar
   grid.muted, grid.soloed = muted, soloed
   roll.song, roll.channel, roll.bar = song, channel, bar
+  roll.hidden = unheard()
   updateToolbar()
   updateInfo()
   updateInstrument()
@@ -276,6 +288,7 @@ end
 function grid:onMute(c)
   muted[c] = not muted[c] or nil
   grid:changed()
+  roll.hidden = unheard()
   play:changed(song)
   status(songs.channelLabel(song, c) .. (muted[c] and " is muted" or " is heard again"))
 end
@@ -283,6 +296,7 @@ end
 function grid:onSolo(c)
   soloed[c] = not soloed[c] or nil
   grid:changed()
+  roll.hidden = unheard()
   play:changed(song)
   local any = next(soloed) ~= nil
   status(soloed[c] and (songs.channelLabel(song, c) .. " plays alone" .. (#song.channels > 1 and "; S on others adds them" or ""))
@@ -812,6 +826,12 @@ local actions = {
   mnuModeVolume = function() setMode("volume") end,
   mnuModeBend = function() setMode("bend") end,
   mnuFlatten = flattenBar,
+  mnuGhosts = function()
+    roll.ghosts = not roll.ghosts
+    setChecked("mnuGhosts", roll.ghosts)
+    status(roll.ghosts and "The other channels' notes show behind this one's"
+      or "Only this channel's notes show")
+  end,
   mnuRecord = function()
     frm.chkRecord.checked = not frm.chkRecord.checked
     frm.chkRecord:fire("onChange")

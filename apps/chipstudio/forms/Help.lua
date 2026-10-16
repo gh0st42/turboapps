@@ -26,6 +26,13 @@ already sounding adds another pitch to it: a chord.
 The roll only has rows for the notes of the song's **scale**, so whatever
 you put down fits. The rows of the key are lit.
 
+The notes the other channels play in the bar show faintly behind, in their
+colours, so a harmony or a bass is easy to write against the lead. **View >
+Show Other Channels** (Cmd+G) hides them; muted channels never show.
+
+On a drum channel the rows are its drums, kick at the bottom and crash at
+the top.
+
 ## 3. Listen
 
 **Space** plays from the bar you picked, and goes round again while
@@ -102,6 +109,7 @@ through [ffmpeg](https://ffmpeg.org) when it is installed.
 | - and = | the keyboard an octave down, up |
 | Cmd+R | record from the keyboard |
 | Cmd+1, 2, 3 | drag notes, volume, bends |
+| Cmd+G | show or hide the other channels' notes |
 ]==]
 
 frm.vwHelp.text = frm.TEXT

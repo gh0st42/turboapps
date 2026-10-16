@@ -28,4 +28,14 @@ function M.channelColor(song, c)
   return list[(n - 1) % #list + 1]
 end
 
+-- mix is colour a taken part of the way to colour b: by f, from 0 (a) to 1
+-- (b). Canvases draw without see-through, so faint colours are mixed.
+function M.mix(a, b, f)
+  local function rgb(h) return tonumber(h:sub(2, 3), 16), tonumber(h:sub(4, 5), 16), tonumber(h:sub(6, 7), 16) end
+  local r1, g1, b1 = rgb(a)
+  local r2, g2, b2 = rgb(b)
+  local function at(x, y) return math.floor(x + (y - x) * f + 0.5) end
+  return ("#%02x%02x%02x"):format(at(r1, r2), at(g1, g2), at(b1, b2))
+end
+
 return M

@@ -7,6 +7,8 @@
 --   roll.playTick                       where the bar is playing, or nil
 --   roll.mode                           "notes", "volume" or "bend": what a drag does
 --   roll.cursorTick                     where a note played on the keyboard goes, or nil
+--   roll.ghosts                         whether the other channels' notes show, faintly
+--   roll.hidden                         channels whose notes do not show: { [3] = true }
 --   roll:reveal()                       scrolls to the notes, or the channel's octave
 --   roll:changed()                      draws it again after the song changed
 --   roll:pointOf(pitch, tick)           where that is on it, for the tests
@@ -16,6 +18,11 @@
 -- sounding there adds that pitch to it, a chord. Dragging a note moves it,
 -- dragging its end stretches it, and a click on it takes it away, as does
 -- a right click. The wheel scrolls up and down.
+--
+-- On a melody channel, the notes the other melody channels play in the bar
+-- show faintly behind its own, in their colours, so a harmony or a bass can
+-- be written against the lead. They are only to see by: clicks go to the
+-- channel's own notes.
 --
 -- In volume mode, dragging a note up or down makes it louder or quieter
 -- where it was grabbed: at its start or end, or at a new point in between,
@@ -34,7 +41,7 @@ local gui = require "gui"
 local songs = require "song"
 local look = require "look"
 
-local GUTTER = 58
+local GUTTER = 72
 local ROW = 16
 
 gui.define {
@@ -45,6 +52,7 @@ gui.define {
     local s = { top = 1, rows = {}, rowH = ROW }
     c.song, c.channel, c.bar, c.playTick = nil, 1, 1, nil
     c.mode, c.cursorTick = "notes", nil
+    c.ghosts, c.hidden = true, {}
 
     function c:changed() self:redraw() end
 
@@ -128,6 +136,30 @@ gui.define {
         g:color(tk % song.ticksPerBeat == 0 and look.colors.beat or look.colors.step)
         if tk == 0 or tk == s.ticks then g:color(look.colors.barLine) end
         g:line(x, 0, x, H)
+      end
+      -- The other melody channels' notes, faint and thin, bends and all.
+      if self.ghosts and not drum then
+        for oc = 1, #song.channels do
+          local op = oc ~= self.channel and not songs.isDrum(song, oc) and not (self.hidden or {})[oc]
+            and songs.patternAt(song, oc, self.bar)
+          if op then
+            g:color(look.mix(look.channelColor(song, oc), look.colors.roll, 0.55))
+            local h = math.max(2, math.floor(s.rowH / 4))
+            for _, n in ipairs(op.notes) do
+              for _, q in ipairs(n.pitches) do
+                for tk = songs.noteStart(n), songs.noteEnd(n) - 1 do
+                  local _, bend = songs.shapeAt(n, tk + 0.5)
+                  local y = s.yOf(q + bend)
+                  if y then
+                    local xa = math.floor(GUTTER + tk * s.colW) + (tk == songs.noteStart(n) and 2 or 0)
+                    local xb = math.floor(GUTTER + (tk + 1) * s.colW) - (tk == songs.noteEnd(n) - 1 and 1 or 0)
+                    g:fill(xa, math.floor(y - h / 2), math.max(1, xb - xa), h)
+                  end
+                end
+              end
+            end
+          end
+        end
       end
       -- Notes: as thick as they are loud, with their bends drawn over them.
       local mode = self.mode or "notes"

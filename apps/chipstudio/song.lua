@@ -498,9 +498,20 @@ function M.rows(s, c, b)
   return out
 end
 
--- pitchName is what a row is called: "C4", or "Drum 3" on a drum channel.
+-- DRUMS are what the drums of a drumset (BeepBox's "standard drumset" and
+-- those made from it) are called, from the lowest: BeepBox gives them no
+-- names, so these are what they sound like.
+M.DRUMS = { "Kick", "Low tom", "Mid tom", "High tom", "Snare", "Clap", "Rim",
+  "Shaker", "Closed hat", "Open hat", "Swell", "Crash" }
+
+-- pitchName is what a row is called: "C4"; on a drum channel the drum
+-- ("Snare") when it plays a drumset, or how high its noise is ("Noise 3").
 function M.pitchName(s, c, pitch)
-  if M.isDrum(s, c) then return "Drum " .. (pitch + 1) end
+  if M.isDrum(s, c) then
+    local inst = M.instrument(s, c)
+    if inst and inst.type == "drumset" and M.DRUMS[pitch + 1] then return M.DRUMS[pitch + 1] end
+    return "Noise " .. (pitch + 1)
+  end
   local key = M.keyIndex(s.key) - 1
   local abs = pitch + key
   return M.NOTE_NAMES[abs % 12 + 1] .. math.floor(abs / 12)
