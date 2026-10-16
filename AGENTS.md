@@ -153,7 +153,8 @@ what it is and how it is used. UI text is plain English, without jargon.
   Never play sound at full volume while trying things: volume 0, or none.
   Done: the song grid, the piano roll with note volume and bends, the
   keyboard as a piano that records, mute and solo, the other channels
-  shown faintly in the roll, named drums, presets, undo, WAV, and
+  shown faintly in the roll, named drums, a scope of the channels as
+  they play (drawn from the notes, not the sound), presets, undo, WAV, and
   OGG through ffmpeg (libvorbis, else ffmpeg's own vorbis encoder).
   Later, and optional: listing an fz project's assets/bgm songs to open by
   name (file dialogs do for now), BeepBox share URLs.

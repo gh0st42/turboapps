@@ -534,6 +534,26 @@ function M.scaleFrom(s, c, from, count)
   return out
 end
 
+-- sounding is what channel c plays at a tick of bar b: a list of
+-- { pitch =, volume = 0 to 1, since = seconds since the note began }, a
+-- pitch each, bends and volume shapes taken in. Empty between notes.
+function M.sounding(s, c, b, tick)
+  local out = {}
+  local p = M.patternAt(s, c, b)
+  if not p then return out end
+  local secondsPerTick = 60 / (s.beatsPerMinute * s.ticksPerBeat)
+  for _, n in ipairs(p.notes) do
+    if M.noteStart(n) <= tick and tick < M.noteEnd(n) then
+      local vol, bend = M.shapeAt(n, tick)
+      for _, q in ipairs(n.pitches) do
+        out[#out + 1] = { pitch = q + bend, volume = vol / 100,
+          since = (tick - M.noteStart(n)) * secondsPerTick }
+      end
+    end
+  end
+  return out
+end
+
 ---------------------------------------------------------------- instruments
 
 function M.instrument(s, c)

@@ -11,6 +11,8 @@ M.colors = {
   noteBox = "#9da2ad", bend = "#b2303a", record = "#d63a3a",
   muted = "#b9bbc2", mute = "#d63a3a", solo = "#e3a21a",
   beat = "#c9ccd4", step = "#e7e8ec", barLine = "#8d909a", gutter = "#eceef2",
+  -- The scope: a dark screen of the 1980s, its scan lines a shade darker.
+  scope = "#0c140f", scopeGrid = "#1d2b22", scopeLine = "#080d0a", scopeDim = "#3c5244",
 }
 
 local PITCH = { "#45a3ff", "#ffc23d", "#5fd068", "#ff6fae", "#b18cff", "#3fd6cf", "#ff8a4d",
@@ -26,6 +28,26 @@ function M.channelColor(song, c)
   for i = 1, c do if song.channels[i].type == ch.type then n = n + 1 end end
   local list = ch.type == "drum" and DRUM or PITCH
   return list[(n - 1) % #list + 1]
+end
+
+-- VGA fonts, the best first, by the names they are installed under: the
+-- scope's lettering, as on a screen of the time.
+M.VGA = {
+  "Flexi IBM VGA True", "Flexi IBM VGA False",
+  "Perfect DOS VGA 437 Win", "Perfect DOS VGA 437",
+  "PxPlus IBM VGA 8x16", "Px437 IBM VGA 8x16", "Mx437 IBM VGA 8x16",
+  "Web437 IBM VGA 8x16", "PxPlus IBM VGA9", "Px437 IBM VGA9",
+}
+
+-- fixedFont is the first VGA font of those installed (fonts, as
+-- gui.fonts() gives them), or else "mono".
+function M.fixedFont(fonts)
+  local have = {}
+  for _, name in ipairs(fonts or {}) do have[name:lower()] = name end
+  for _, name in ipairs(M.VGA) do
+    if have[name:lower()] then return have[name:lower()] end
+  end
+  return "mono"
 end
 
 -- mix is colour a taken part of the way to colour b: by f, from 0 (a) to 1

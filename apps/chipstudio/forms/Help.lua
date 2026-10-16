@@ -39,6 +39,10 @@ the top.
 **Loop** is on. **This bar only** plays the bar you are working on over and
 over; change it while it plays and you hear the change the next time round.
 
+While it plays, the screen beside the grid shows each channel's wave, as an
+old oscilloscope would: higher notes make tighter waves, louder ones taller,
+and drums crackle as noise.
+
 ## 4. Choose sounds
 
 Pick a channel, then a sound from the list on the right: it plays a note so

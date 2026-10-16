@@ -16,7 +16,7 @@ local help = require "forms.Help"
 local settingsStore = require "settings"
 
 local frm = gui.load "ChipStudio" --[[@as forms.ChipStudio]]
-local grid, roll = frm.grdSong, frm.rolNotes
+local grid, roll, scope = frm.grdSong, frm.rolNotes, frm.scpSong
 
 local song = songs.new()
 local path            -- where it is kept, or nil for a new song
@@ -184,6 +184,7 @@ local function show(reveal)
   grid.muted, grid.soloed = muted, soloed
   roll.song, roll.channel, roll.bar = song, channel, bar
   roll.hidden = unheard()
+  scope:follow(song, (lastAt and not lastAt.waiting) and lastAt or nil, roll.hidden)
   updateToolbar()
   updateInfo()
   updateInstrument()
@@ -445,6 +446,7 @@ local function stop()
   lastAt = nil
   grid.playBar = nil
   roll.playTick = nil
+  scope:follow(song, nil, unheard())
   updatePlayButtons()
   updateKeys()
 end
@@ -459,6 +461,7 @@ local function tick()
   lastAt = at
   if grid.playBar ~= at.bar then grid.playBar = at.bar end
   roll.playTick = (at.bar == bar and not at.waiting) and at.tick or nil
+  scope:follow(song, not at.waiting and at or nil, unheard())
   return true
 end
 

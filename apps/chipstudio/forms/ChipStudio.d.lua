@@ -35,6 +35,7 @@
 ---@field pnlBar gui.Panel
 ---@field pnlInfo gui.Panel
 ---@field rolNotes gui.Object
+---@field scpSong gui.Object
 ---@field sldVolume gui.Slider
 ---@field spnBars gui.Spinner
 ---@field spnBeats gui.Spinner
