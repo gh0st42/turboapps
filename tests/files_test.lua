@@ -151,6 +151,64 @@ test("settings round trip", function()
   os.remove(fs.settingsFile)
 end)
 
+---------------------------------------------------------------- drives
+
+-- A mount table as Linux has it, with two drives udisks mounted and the
+-- usual others. The drives' folders are made under root, standing for
+-- /media/<user>.
+local media = root .. "/media/ann"
+lfs.mkdir(root .. "/media")
+lfs.mkdir(media)
+lfs.mkdir(media .. "/USB STICK")
+lfs.mkdir(media .. "/USB STICK/photos")
+lfs.mkdir(media .. "/sd")
+local MOUNTS = table.concat({
+  "/dev/nvme0n1p2 / ext4 rw,relatime 0 0",
+  "proc /proc proc rw,nosuid 0 0",
+  "/dev/sdb1 " .. media:gsub(" ", "\\040") .. "/USB\\040STICK vfat rw,nosuid,nodev 0 0",
+  "/dev/mmcblk0p1 " .. media .. "/sd exfat rw 0 0",
+  "/dev/sda1 /mnt/backup ext4 rw 0 0",
+}, "\n") .. "\n"
+write(root .. "/mounts", MOUNTS)
+fs.mountsFile = root .. "/mounts"
+fs.mediaRoots = { root .. "/media/" }
+
+test("drives are read from the mount table", function()
+  local d = fs.drives()
+  eq(#d, 2)
+  eq(d[1].name, "sd"); eq(d[1].device, "/dev/mmcblk0p1"); eq(d[1].fstype, "exfat")
+  eq(d[2].name, "USB STICK"); eq(d[2].path, media .. "/USB STICK", "\\040 is a space")
+  eq(fs.driveOf(media .. "/USB STICK/photos", d).name, "USB STICK")
+  eq(fs.driveOf(media .. "/USB STICKER", d), nil, "a name that only starts the same")
+  eq(fs.driveOf(box, d), nil)
+  eq(#fs.drives(""), 0)
+  local saved = fs.mountsFile
+  fs.mountsFile = root .. "/none"
+  eq(#fs.drives(), 0, "no mount table: not Linux")
+  fs.mountsFile = saved
+end)
+
+test("a partition's disk, and the steps that eject a drive", function()
+  eq(fs.diskOf("/dev/sdb1"), "/dev/sdb")
+  eq(fs.diskOf("/dev/nvme0n1p2"), "/dev/nvme0n1")
+  eq(fs.diskOf("/dev/mmcblk0p1"), "/dev/mmcblk0")
+  eq(fs.diskOf("/dev/sr0"), "/dev/sr0")
+  local d = { name = "USB", path = "/media/ann/USB", device = "/dev/sdb1" }
+  local function has(...)
+    local set = {}
+    for _, n in ipairs { ... } do set[n] = true end
+    return function(name) return set[name] end
+  end
+  local steps = fs.ejectSteps(d, has("udisksctl", "gio", "umount"))
+  eq(table.concat(steps[1].cmd, " "), "udisksctl unmount -b /dev/sdb1")
+  eq(table.concat(steps[2].cmd, " "), "udisksctl power-off -b /dev/sdb")
+  eq(steps[2].optional, true, "a card reader cannot be switched off")
+  steps = fs.ejectSteps(d, has("gio", "umount"))
+  eq(table.concat(steps[1].cmd, " "), "gio mount -e /media/ann/USB"); eq(#steps, 1)
+  eq(table.concat(fs.ejectSteps(d, has("umount"))[1].cmd, " "), "umount /media/ann/USB")
+  eq(fs.ejectSteps(d, has()), nil)
+end)
+
 ---------------------------------------------------------------- the form
 
 -- Built without being shown. The list's keys are its onKey fired, as FLTK
@@ -309,6 +367,53 @@ test("opener follows the platform", function()
   eq(fs.opener("/a b", "darwin")[1], "open")
   eq(fs.opener("/a b", "linux")[1], "xdg-open")
   eq(fs.opener("C:/x", "windows")[5], "C:\\x")
+end)
+
+test("form: drives are among the places, and eject", function()
+  local gui = require "gui"
+  local places = frm.places()
+  local names = {}
+  for i, p in ipairs(places) do names[i] = p[1] end
+  ok(table.concat(names, ","):find("sd,USB STICK$"), table.concat(names, ","))
+  eq(frm.lstPlaces.items[#places], "USB STICK")
+  eq(frm.lstPlaces.contextMenu[2][1], "&Eject USB STICK")
+  -- Ejecting the drive shown: home first, then each step in turn.
+  frm.go(media .. "/USB STICK/photos")
+  local d = select(2, frm.places())[2]
+  local items = frm.menuFor(0)
+  local found
+  for _, it in ipairs(items) do if type(it) == "table" and it.name == "eject" then found = true end end
+  ok(found, "the folder's menu offers to eject it")
+  local ran, answers = {}, {}
+  local realSpawn, realWhich, realMsgbox = gui.spawn, fs.which, gui.msgbox
+  fs.which = function(name) return name == "udisksctl" and "/usr/bin/udisksctl" or nil end
+  gui.msgbox = function(text) answers[#answers + 1] = text return "ok" end
+  gui.spawn = function(cmd)
+    ran[#ran + 1] = table.concat(cmd, " ")
+    -- The disk switches off, so the drive is gone from the table.
+    if cmd[2] == "power-off" then write(fs.mountsFile, "/dev/mmcblk0p1 " .. media .. "/sd exfat rw 0 0\n") end
+    cmd.onExit(cmd[2] == "power-off" and 1 or 0)
+    return {}
+  end
+  frm.eject(d)
+  eq(frm.state().dir, fs.home(), "off the drive first")
+  eq(ran[1], "udisksctl unmount -b /dev/sdb1"); eq(ran[2], "udisksctl power-off -b /dev/sdb")
+  ok(frm.lblStatus.caption:find("USB STICK can be taken out now"), frm.lblStatus.caption)
+  eq(#answers, 0, "a disk that cannot be switched off is fine")
+  eq(#select(2, frm.places()), 1)
+  -- A drive that will not unmount says why.
+  ran = {}
+  gui.spawn = function(cmd)
+    ran[#ran + 1] = table.concat(cmd, " ")
+    cmd.onOutput("Error unmounting /dev/mmcblk0p1: target is busy", "stderr")
+    cmd.onExit(1)
+    return {}
+  end
+  frm.Menu1:fire("onClick", "mnuEject", "", nil)
+  eq(#ran, 1, "the disk is not switched off")
+  ok(answers[1] and answers[1]:find("target is busy"), tostring(answers[1]))
+  ok(frm.lblStatus.caption:find("sd was not ejected"), frm.lblStatus.caption)
+  gui.spawn, fs.which, gui.msgbox = realSpawn, realWhich, realMsgbox
 end)
 
 -- Tidy up.

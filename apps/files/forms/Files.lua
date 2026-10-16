@@ -15,7 +15,8 @@ local history = fs.history()
 local dir            -- the folder shown
 local entries = {}   -- what is in it, as fs.list gives them, sorted
 local hiddenCount = 0
-local places = fs.places()
+local places = {}     -- what lstPlaces lists: { name, path [, drive] } each
+local drives = {}     -- the drives mounted, as fs.drives gives them
 local SORTS = { "name", "size", "modified", "kind" }
 
 ---------------------------------------------------------------- showing
@@ -89,6 +90,8 @@ end
 
 -- go shows another folder. how is "visit" (the default), or "history" for
 -- back and forward, which keep the history as it is.
+local choosingPlace = false
+
 local function go(path, how, selectName)
   path = fs.normalize(path)
   if not fs.isDir(path) then
@@ -233,6 +236,131 @@ local function sortBy(by)
   end
 end
 
+---------------------------------------------------------------- drives
+
+local ejecting -- the drive being taken out
+
+-- placesMenu is what a right click on the places offers: to eject each
+-- drive there is.
+local placesMenu -- below
+
+-- refreshPlaces lists the places again, with the drives mounted now,
+-- keeping the selection where it was.
+local function refreshPlaces()
+  drives = fs.drives()
+  local at = places[frm.lstPlaces.selected or 0]
+  places = fs.places()
+  for _, d in ipairs(drives) do places[#places + 1] = { d.name, d.path, drive = d } end
+  local names, sel = {}, nil
+  for i, p in ipairs(places) do
+    names[i] = p[1]
+    if at and p[2] == at[2] then sel = i end
+  end
+  choosingPlace = true
+  frm.lstPlaces.items = names
+  if sel then frm.lstPlaces.selected = sel end
+  choosingPlace = false
+  frm.lstPlaces.contextMenu = placesMenu()
+end
+
+-- driveToEject is the drive Eject means: the one the folder shown is on,
+-- else the one picked in the places, else the only one there is.
+local function driveToEject()
+  local d = dir and fs.driveOf(dir, drives)
+  if d then return d end
+  local p = places[frm.lstPlaces.selected or 0]
+  if p and p.drive then return p.drive end
+  if #drives == 1 then return drives[1] end
+end
+
+-- eject takes a drive out: off its folders first, then unmounted (and,
+-- with udisks, the disk switched off), a step at a time.
+local function eject(d)
+  d = d or driveToEject()
+  if not d then
+    frm.lblStatus.caption = "  There is no drive to eject"
+    return
+  end
+  if ejecting then return end
+  local steps = fs.ejectSteps(d)
+  if not steps then
+    gui.msgbox(("Cannot eject %s: there is no udisksctl, gio or umount."):format(d.name), "ok", "Eject")
+    return
+  end
+  -- A drive cannot be unmounted while its folder is open.
+  if fs.driveOf(dir, { d }) then go(fs.home()) end
+  ejecting = d
+  frm.lblStatus.caption = "  Ejecting " .. d.name .. "..."
+  local errors = {}
+  local function step(i)
+    local st = steps[i]
+    if not st then
+      ejecting = nil
+      refreshPlaces()
+      frm.lblStatus.caption = ("  %s can be taken out now"):format(d.name)
+      return
+    end
+    local cmd = { dir = fs.home(),
+      onOutput = function(line, stream)
+        if stream == "stderr" and line ~= "" then errors[#errors + 1] = line end
+      end,
+      onExit = function(code)
+        if code == 0 or st.optional then
+          step(i + 1)
+        else
+          ejecting = nil
+          refreshPlaces()
+          frm.lblStatus.caption = "  " .. d.name .. " was not ejected"
+          gui.msgbox(("Cannot eject %s.\n\n%s"):format(d.name,
+            #errors > 0 and table.concat(errors, "\n") or ("%s stopped with %d."):format(st.cmd[1], code)),
+            "ok", "Eject")
+        end
+      end,
+    }
+    for k, v in ipairs(st.cmd) do cmd[k] = v end
+    local ok, err = pcall(gui.spawn, cmd)
+    if not ok then
+      ejecting = nil
+      gui.msgbox(("Cannot eject %s.\n\n%s"):format(d.name, tostring(err)), "ok", "Eject")
+    end
+  end
+  step(1)
+end
+
+placesMenu = function()
+  local items = {}
+  for _, d in ipairs(drives) do
+    local caption = d.name:gsub("&", "&&"):gsub("/", "\\/")
+    items[#items + 1] = { "&Eject " .. caption, function() eject(d) end }
+  end
+  if #items == 0 then items[1] = { "No drives to eject", enabled = false } end
+  return items
+end
+
+-- watchDrives looks at the mount table every so often, so drives show up
+-- when they are plugged in and go when they are taken out.
+local function watchDrives()
+  local f = io.open(fs.mountsFile)
+  if not f then return end -- not Linux: nothing to watch
+  f:close()
+  local function signature()
+    local t = {}
+    for i, d in ipairs(fs.drives()) do t[i] = d.path end
+    return table.concat(t, "\0")
+  end
+  local last = signature()
+  gui.every(2, function()
+    local now = signature()
+    if now ~= last then
+      last = now
+      refreshPlaces()
+      -- The folder shown went with its drive.
+      if dir and not fs.isDir(dir) then go(fs.home()) end
+    end
+    return true
+  end)
+end
+
 ---------------------------------------------------------------- context menus
 
 local function checkedSort(by)
@@ -248,7 +376,7 @@ local function folderItems()
       checked = checkedSort(by), function() sortBy(by) end,
     }
   end
-  return {
+  local items = {
     { "New &Folder...", name = "newFolder", newFolder },
     "-",
     { "Show &Hidden Files", name = "hidden", checked = settings.showHidden,
@@ -264,6 +392,13 @@ local function folderItems()
       if new then applySettings(new) end
     end },
   }
+  -- On a drive, it can be ejected from here.
+  local d = fs.driveOf(dir, drives)
+  if d then
+    table.insert(items, #items, { "&Eject " .. d.name, name = "eject", function() eject(d) end })
+    table.insert(items, #items, "-")
+  end
+  return items
 end
 
 -- menuFor is the context menu for row i of the list, or for the folder
@@ -332,7 +467,6 @@ function frm.txtPath:onKey(key)
   return false
 end
 
-local choosingPlace = false
 
 function frm.lstPlaces:onChange()
   if choosingPlace then return end
@@ -379,6 +513,8 @@ Anywhere:
   Cmd+L                    type a folder to go to
   Cmd+Shift+.              show or hide hidden files
   F5                       read the folder again
+  Cmd+E                    eject the drive (USB stick, SD card)
+                           shown, or picked in the places
   Tab                      the list, the places, the path
 
 Click a column's title to sort by it, again to reverse it.]]
@@ -400,6 +536,7 @@ local actions = {
     local new = settingsForm.ask(settings)
     if new then applySettings(new) end
   end,
+  mnuEject = function() eject() end,
   mnuExit = function() frm:close() end,
   mnuBack = goBack,
   mnuForward = goForward,
@@ -430,11 +567,8 @@ end
 
 ---------------------------------------------------------------- starting
 
-choosingPlace = true
-local names = {}
-for i, p in ipairs(places) do names[i] = p[1] end
-frm.lstPlaces.items = names
-choosingPlace = false
+refreshPlaces()
+watchDrives()
 setMenuChecked("mnuHidden", settings.showHidden)
 
 -- A folder named on the command line is shown first: tlua files.ztl ~/src
@@ -451,5 +585,7 @@ frm.state = function()
 end
 frm.go = go
 frm.applySettings = applySettings
+frm.refreshPlaces, frm.eject = refreshPlaces, eject
+frm.places = function() return places, drives end
 
 return frm

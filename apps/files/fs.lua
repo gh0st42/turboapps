@@ -278,6 +278,89 @@ function M.places()
   return list
 end
 
+---------------------------------------------------------------- drives
+
+-- Drives are what Linux mounts by itself when they are plugged in: USB
+-- sticks, SD cards, discs. udisks puts them under /media/<user> or
+-- /run/media/<user>, as the system's mount table says. The tests point
+-- these elsewhere.
+M.mountsFile = "/proc/self/mounts"
+M.mediaRoots = { "/media/", "/run/media/" }
+
+-- unoctal reads the mount table's escapes: \040 is a space.
+local function unoctal(s)
+  return (s:gsub("\\(%d%d%d)", function(o) return string.char(tonumber(o, 8)) end))
+end
+
+-- drives lists the drives mounted now, by their names: name, path, the
+-- device and its file system. text is the mount table, read when not given.
+function M.drives(text)
+  if not text then
+    local f = io.open(M.mountsFile)
+    if not f then return {} end
+    text = f:read("*a")
+    f:close()
+  end
+  local list = {}
+  for line in text:gmatch("[^\n]+") do
+    local device, path, fstype = line:match("^(%S+)%s+(%S+)%s+(%S+)")
+    if device then
+      path = unoctal(path)
+      for _, root in ipairs(M.mediaRoots) do
+        if path:sub(1, #root) == root and #path > #root then
+          list[#list + 1] = { name = M.basename(path), path = M.normalize(path),
+            device = unoctal(device), fstype = fstype }
+          break
+        end
+      end
+    end
+  end
+  table.sort(list, function(a, b) return a.name:lower() < b.name:lower() end)
+  return list
+end
+
+-- driveOf is the drive a path is on, or nil.
+function M.driveOf(path, drives)
+  path = M.normalize(path)
+  for _, d in ipairs(drives) do
+    if path == d.path or path:sub(1, #d.path + 1) == d.path .. "/" then return d end
+  end
+end
+
+-- diskOf is the whole disk a partition is on: /dev/sdb1 is on /dev/sdb,
+-- /dev/nvme0n1p2 on /dev/nvme0n1, /dev/mmcblk0p1 on /dev/mmcblk0.
+function M.diskOf(device)
+  local disk = device:match("^(/dev/nvme%d+n%d+)p%d+$") or device:match("^(/dev/mmcblk%d+)p%d+$")
+    or device:match("^(/dev/[hsv]d%a+)%d+$")
+  return disk or device
+end
+
+-- which finds a program on the PATH, or nil.
+function M.which(name)
+  for dir in (os.getenv("PATH") or ""):gmatch("[^:]+") do
+    local path = M.join(dir, name)
+    if lfs.attributes(path, "mode") == "file" then return path end
+  end
+end
+
+-- ejectSteps are the commands that take a drive out safely, run one after
+-- another: with udisks, unmounting it and then switching the disk off (a
+-- disk that cannot be switched off, a card reader's say, is still safe
+-- to take out, so that step may fail); else gio, else umount. which says
+-- whether a program is there; nil when there is none of them.
+function M.ejectSteps(drive, which)
+  which = which or M.which
+  if which("udisksctl") then
+    local steps = { { cmd = { "udisksctl", "unmount", "-b", drive.device } } }
+    if drive.device:find("^/dev/") then
+      steps[2] = { cmd = { "udisksctl", "power-off", "-b", M.diskOf(drive.device) }, optional = true }
+    end
+    return steps
+  end
+  if which("gio") then return { { cmd = { "gio", "mount", "-e", drive.path } } } end
+  if which("umount") then return { { cmd = { "umount", drive.path } } } end
+end
+
 ---------------------------------------------------------------- settings
 
 M.defaults = {
