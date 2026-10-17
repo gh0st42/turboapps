@@ -163,6 +163,11 @@ what it is and how it is used. UI text is plain English, without jargon.
   OGG through ffmpeg (libvorbis, else ffmpeg's own vorbis encoder).
   Later, and optional: listing an fz project's assets/bgm songs to open by
   name (file dialogs do for now), BeepBox share URLs.
+- pixel has an Advanced menu (a tilemap grid with tile numbers, copy, cut,
+  paste and clear of tiles, focus on one tile, a hand tool). The hand
+  pans with a Scroll's `scrollX` and `scrollY`, which tlua has after
+  0.7.1 (uncommitted in ../tlua when this was written): until a release
+  has them, its test of the hand needs a tlua built from that source.
 - files lists the drives Linux automounts (from /proc/self/mounts) and
   ejects them; it is tested against a mount table of the tests' own, and
   has not run on a Linux desktop yet.

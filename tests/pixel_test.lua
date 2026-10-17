@@ -344,6 +344,327 @@ test("form: palette menu converts the picture", function()
   eq(s.pic.palette, "pico")
 end)
 
+test("fill and brushes keep to a box", function()
+  local p = picture.new(8, 4, "pico", 0)
+  eq(p:fill(1, 1, 5, { 0, 0, 3, 3 }), 16, "a box of 4 by 4")
+  eq(art(p):sub(1, 9), "55550000\n", "the other half is as it was")
+  eq(p:fill(6, 1, 7, { 0, 0, 3, 3 }), 0, "a start outside the box fills nothing")
+  p.clip = { 4, 0, 5, 1 }
+  p:rect(0, 0, 7, 3, 9, true)
+  p.clip = nil
+  eq(p:get(3, 0), 5); eq(p:get(4, 0), 9); eq(p:get(5, 1), 9); eq(p:get(6, 0), 0); eq(p:get(4, 2), 0)
+end)
+
+test("session: with tiles, strokes and fills stay in the tile", function()
+  local s = session.new(picture.new(32, 32, "pico", 0))
+  s.tile = 16
+  s.color = 3
+  s:setTool("fill")
+  s:press(20, 5, 1)
+  eq(s.pic:get(16, 0), 3); eq(s.pic:get(31, 15), 3)
+  eq(s.pic:get(15, 0), 0, "not the tile beside"); eq(s.pic:get(16, 16), 0, "nor the one below")
+  s:undo()
+  s:setTool("pen")
+  s.color = 4
+  s:press(14, 8, 1)
+  s:drag(20, 8)
+  s:release(20, 8)
+  eq(s.pic:get(15, 8), 4); eq(s.pic:get(16, 8), 0, "a stroke stops at the edge of its tile")
+  s:setTool("rect")
+  s.filled = true
+  s.color = 6
+  s:press(10, 10, 1)
+  s:drag(24, 24)
+  local seen = 0
+  s:shape(function(x, y) if x > 15 or y > 15 then seen = seen + 1 end end)
+  eq(seen, 0, "the preview is cut off too")
+  s:release(24, 24)
+  eq(s.pic:get(15, 15), 6); eq(s.pic:get(16, 15), 0); eq(s.pic:get(15, 16), 0)
+  s.tile = nil
+  s:setTool("fill")
+  s.color = 8
+  s:press(0, 31, 1)
+  eq(s.pic:get(31, 31), 8, "without tiles it fills as far as it goes")
+end)
+
+test("session: the last tiles are as small as the picture leaves them", function()
+  local s = session.new(picture.new(20, 20, "pico", 0))
+  s.tile = 16
+  local k = s:tileBox(18, 3)
+  eq(k[1], 16); eq(k[3], 19); eq(k[2], 0); eq(k[4], 15)
+end)
+
+test("form: the Advanced menu and the tilemap grid", function()
+  local function titles()
+    local out = {}
+    for _, m in ipairs(frm.Menu1.items) do out[#out + 1] = m[1] end
+    return table.concat(out, ",")
+  end
+  ok(not titles():find("vanced", 1, true), "off to begin with")
+  frm.Menu1:fire("onClick", "mnuAdvanced", "", true)
+  ok(titles():find("Ad&vanced,&Help", 1, true), "before Help")
+  local on, tiled = frm.advanced()
+  ok(on and not tiled)
+  eq(s.tile, nil, "tiles are off until asked for")
+  frm.Menu1:fire("onClick", "mnuTiles", "", true)
+  eq(s.tile, 16, "16 by 16 to begin with")
+  frm.setTileSize(4); eq(frm.tileSize(), 8, "at least 8")
+  frm.setTileSize(100); eq(frm.tileSize(), 64, "at most 64")
+  eq(s.tile, 64, "drawing follows")
+  frm.setTileSize(8)
+  frm.setZoom(8)
+  frm.cnvImage:snapshot() -- drawn with its tiles
+  -- Asking for a size.
+  local gui = require "gui"
+  local inputbox, msgbox = gui.inputbox, gui.msgbox
+  local reply
+  gui.inputbox = function() return reply end
+  gui.msgbox = function() end
+  reply = "24"
+  frm.Menu1:fire("onClick", "mnuTileSize", "", nil)
+  eq(frm.tileSize(), 24)
+  eq(s.tile, 24)
+  reply = "99"
+  frm.Menu1:fire("onClick", "mnuTileSize", "", nil)
+  eq(frm.tileSize(), 24, "out of range: unchanged")
+  reply = "16x16"
+  frm.Menu1:fire("onClick", "mnuTileSize", "", nil)
+  eq(frm.tileSize(), 16)
+  reply = nil
+  frm.Menu1:fire("onClick", "mnuTileSize", "", nil)
+  eq(frm.tileSize(), 16, "cancelled")
+  gui.inputbox, gui.msgbox = inputbox, msgbox
+  -- Turning Advanced off takes the menu and the tiles away.
+  frm.Menu1:fire("onClick", "mnuAdvanced", "", false)
+  ok(not titles():find("vanced", 1, true))
+  eq(s.tile, nil)
+  local _, tiled2 = frm.advanced()
+  ok(not tiled2)
+end)
+
+test("tiles: copy, paste and clear a box", function()
+  local p = picture.new(8, 4, "pico", 0)
+  p:rect(0, 0, 3, 3, 5, true)
+  p:set(1, 1, CLEAR)
+  local clip = p:copyBox({ 0, 0, 3, 3 })
+  eq(clip.w, 4); eq(clip.h, 4); eq(clip.palette, "pico")
+  p:pasteBox(4, 0, clip, { 4, 0, 7, 3 })
+  eq(art(p), rows("55555555", "5.555.55", "55555555", "55555555"))
+  -- Only as much as fits in the box goes down.
+  local q = picture.new(8, 4, "pico", 0)
+  q:pasteBox(2, 0, clip, { 4, 0, 7, 3 })
+  eq(art(q), rows("00005500", "00005500", "00005500", "00005500"), "the left of it is cut off")
+  p:clearBox({ 0, 0, 3, 3 })
+  eq(art(p), rows("....5555", "....5.55", "....5555", "....5555"))
+  -- Another palette's colours become the nearest.
+  local v = picture.new(4, 4, "vga", 0)
+  v:pasteBox(0, 0, clip, { 0, 0, 3, 3 })
+  local e = palettes.get("pico")[5]
+  local want = palettes.nearest(palettes.get("vga"), e[1], e[2], e[3])
+  eq(v:get(0, 0), want); eq(v:get(1, 1), CLEAR, "transparent stays so")
+  -- A part as an image of its own.
+  local img = p:cropImage({ 4, 0, 7, 1 })
+  eq(img.width, 4); eq(img.height, 2)
+end)
+
+test("session: tiles are picked, copied, pasted, cut and cleared", function()
+  local s = session.new(picture.new(32, 32, "pico", 0))
+  eq(s:selectedBox(), nil, "no tiles, no tile")
+  eq(s:copyTile(), false)
+  s.tile = 8
+  local k = s:selectedBox()
+  eq(k[1], 0); eq(k[3], 7)
+  -- Drawing in a tile picks it.
+  s.color = 5
+  s:setTool("pen")
+  s:press(18, 10, 1); s:release(18, 10)
+  local col, row = s:tileCoords()
+  eq(col, 2); eq(row, 1)
+  eq(s:selectedBox()[1], 16)
+  ok(s:selectTile(3, 30)); eq(select(2, s:tileCoords()), 3)
+  ok(not s:selectTile(40, 3), "not off the picture")
+  -- Moving by tiles stops at the edges.
+  s:selectTile(0, 0)
+  ok(not s:moveTile(-1, 0)); ok(s:moveTile(1, 0)); eq(s:tileCoords(), 1)
+  ok(s:moveTile(0, 3)); ok(not s:moveTile(0, 1))
+  -- Copy, paste.
+  s:selectTile(16, 8)
+  ok(s:copyTile())
+  s:selectTile(0, 0)
+  ok(s:pasteTile())
+  eq(s.pic:get(2, 2), 5, "the pixel is in the tile pasted into")
+  s:undo()
+  eq(s.pic:get(2, 2), 0, "undone in one step")
+  s:redo()
+  -- Cut: gone from where it was, and still to paste.
+  s:selectTile(16, 8)
+  ok(s:cutTile())
+  eq(s.pic:get(18, 10), CLEAR, "cut tiles are transparent")
+  s:selectTile(24, 24)
+  ok(s:pasteTile())
+  eq(s.pic:get(26, 26), 5)
+  ok(s:clearTile())
+  eq(s.pic:get(26, 26), CLEAR)
+  eq(s.pic:get(2, 2), 5, "other tiles are as they were")
+  -- A tile at the edge is smaller, and takes what fits.
+  local e = session.new(picture.new(20, 20, "pico", 0))
+  e.tile = 16
+  e.tileClip = picture.new(16, 16, "pico", 7):copyBox({ 0, 0, 15, 15 })
+  e:selectTile(18, 3)
+  ok(e:pasteTile())
+  eq(e.pic:get(19, 0), 7); eq(e.pic:get(19, 15), 7); eq(e.pic:get(15, 0), 0, "not the tile beside")
+  eq(e.pic:get(19, 16), 0, "nor the one below")
+end)
+
+test("form: tile commands and focus", function()
+  local gui = require "gui"
+  s:apply(function(p) p:clear() end)
+  frm.Menu1:fire("onClick", "mnuAdvanced", "", true)
+  frm.Menu1:fire("onClick", "mnuTiles", "", true)
+  frm.setTileSize(8)
+  frm.setZoom(4)
+  local function find(name)
+    local found
+    local function walk(list)
+      for _, it in ipairs(list) do
+        if type(it) == "table" then
+          if it.name == name then found = it end
+          if type(it[2]) == "table" then walk(it[2]) end
+        end
+      end
+    end
+    walk(frm.Menu1.items)
+    return found
+  end
+  ok(find("mnuTileCopy").enabled and find("mnuFocus").enabled)
+  ok(not find("mnuTilePaste").enabled, "nothing copied yet")
+  -- The middle button picks a tile without drawing.
+  local z = frm.zoom()
+  frm.cnvImage:fire("onMouseDown", 8 * z * 2 + 1, 8 * z + 1, 2, false, "")
+  local col, row = s:tileCoords()
+  eq(col, 2); eq(row, 1)
+  eq(s.pic:get(16, 8), CLEAR, "nothing was drawn")
+  -- Draw in it, copy it, paste it elsewhere.
+  s.color = 5
+  frm.cmdPen:fire("onClick")
+  frm.cnvImage:fire("onMouseDown", z * 17 + 1, z * 9 + 1, 1, false, "")
+  frm.cnvImage:fire("onMouseUp", z * 17 + 1, z * 9 + 1, 1)
+  eq(s.pic:get(17, 9), 5)
+  frm.Menu1:fire("onClick", "mnuTileCopy", "", nil)
+  ok(find("mnuTilePaste").enabled, "Paste is there once a tile is copied")
+  ok(frm.lblStatus.caption:find("Copied tile #6 (2,1)", 1, true), frm.lblStatus.caption)
+  frm.cnvImage:fire("onMouseDown", 1, 1, 2, false, "")
+  frm.Menu1:fire("onClick", "mnuTilePaste", "", nil)
+  eq(s.pic:get(1, 1), 5)
+  frm.Menu1:fire("onClick", "mnuTileClear", "", nil)
+  eq(s.pic:get(1, 1), CLEAR)
+  frm.Menu1:fire("onClick", "mnuUndo", "", nil)
+  eq(s.pic:get(1, 1), 5, "a tile command is one step of undo")
+  frm.Menu1:fire("onClick", "mnuTileCut", "", nil)
+  eq(s.pic:get(1, 1), CLEAR)
+  -- Focus: the tile picked, big.
+  frm.cnvImage:fire("onMouseDown", 8 * z * 2 + 1, 8 * z + 1, 2, false, "")
+  frm.Menu1:fire("onClick", "mnuFocus", "", true)
+  local f = frm.zoom()
+  ok(f > z, "bigger")
+  eq(frm.cnvImage.width, 8 * f); eq(frm.cnvImage.height, 8 * f)
+  frm.cnvImage:snapshot()
+  s.color = 9
+  frm.cnvImage:fire("onMouseDown", f * 3 + 1, f * 2 + 1, 1, false, "")
+  frm.cnvImage:fire("onMouseDrag", f * 20, f * 2 + 1) -- past the tile's edge
+  frm.cnvImage:fire("onMouseUp", f * 20, f * 2 + 1, 1)
+  for x = 19, 23 do eq(s.pic:get(x, 10), 9, "pixel " .. x) end
+  eq(s.pic:get(24, 10), CLEAR, "the stroke stops at the tile's edge")
+  frm.cnvImage:snapshot()
+  -- Arrows go to the next tile.
+  frm:fire("onKey", "Right", "")
+  eq(s:tileCoords(), 3)
+  eq(frm.cnvImage.width, 8 * frm.zoom())
+  frm:fire("onKey", "Left", "")
+  eq(s:tileCoords(), 2)
+  -- Escape comes out of focus, to the zoom it was at.
+  frm:fire("onKey", "Escape", "")
+  eq(frm.zoom(), z)
+  eq(frm.cnvImage.width, s.pic.w * z)
+  -- Turning tiles off leaves focus too.
+  frm.Menu1:fire("onClick", "mnuFocus", "", true)
+  frm.Menu1:fire("onClick", "mnuTiles", "", false)
+  eq(frm.zoom(), z)
+  frm.Menu1:fire("onClick", "mnuAdvanced", "", false)
+end)
+
+test("session: tiles are numbered along the rows", function()
+  local s = session.new(picture.new(20, 20, "pico", 0))
+  eq(s:tileNumber(), nil, "no tiles, no numbers"); eq(s:tileCount(), nil)
+  s.tile = 8
+  eq(s:tileColumns(), 3); eq(s:tileCount(), 9, "the last row and column are smaller ones")
+  eq(s:tileNumber(0, 0), 0); eq(s:tileNumber(7, 7), 0); eq(s:tileNumber(8, 0), 1)
+  eq(s:tileNumber(19, 3), 2); eq(s:tileNumber(0, 8), 3); eq(s:tileNumber(19, 19), 8)
+  s:selectTile(10, 17)
+  eq(s:tileNumber(), 7)
+  local col, row = s:tileCoords()
+  eq(col, 1); eq(row, 2)
+  local big = session.new(picture.new(128, 128, "pico", 0))
+  big.tile = 8
+  eq(big:tileCount(), 256, "up to #255 in a 128 pixel square")
+end)
+
+test("session: the hand does not draw", function()
+  local s = session.new(picture.new(16, 16, "pico", 0))
+  s.tile = 8
+  s.color = 5
+  s:setTool("hand")
+  s:press(10, 3, 1); s:drag(11, 3); s:release(11, 3)
+  eq(s.pic:get(10, 3), 0); eq(s:canUndo(), false, "and it is nothing to undo")
+  ok(s:tileNumber() == 0, "a press alone does not pick; the form picks on release")
+  ok(s:selectTile(10, 3)); eq(s:tileNumber(), 1)
+end)
+
+test("form: the hand drags the picture and picks tiles", function()
+  s:apply(function(p) p:clear() end)
+  frm.Menu1:fire("onClick", "mnuAdvanced", "", true)
+  frm.Menu1:fire("onClick", "mnuTiles", "", true)
+  frm.setTileSize(8)
+  frm.setZoom(4)
+  local z = frm.zoom()
+  local undos = #s.undoStack
+  frm:fire("onKey", "h", "h")
+  eq(s.tool, "hand"); eq(frm.cmdHand.color, "#9cc4ff"); eq(frm.cnvImage.pointer, "hand")
+  -- A drag moves the scrollbars the other way, and draws nothing.
+  frm.scrImage.scrollX, frm.scrImage.scrollY = 50, 40
+  frm.cnvImage:fire("onMouseDown", 60, 60, 1, false, "")
+  frm.cnvImage:fire("onMouseDrag", 45, 70)
+  eq(frm.scrImage.scrollX, 65); eq(frm.scrImage.scrollY, 30)
+  frm.cnvImage:fire("onMouseUp", 45, 70, 1)
+  eq(#s.undoStack, undos, "nothing was drawn")
+  -- A click picks the tile.
+  frm.cnvImage:fire("onMouseDown", 8 * z * 3 + 1, 8 * z * 2 + 1, 1, false, "")
+  frm.cnvImage:fire("onMouseUp", 8 * z * 3 + 1, 8 * z * 2 + 1, 1)
+  eq(s:tileNumber(), 11, "column 3 of row 2, of 4 across")
+  ok(frm.lblStatus.caption:find("tile #11 of 16 (3,2) picked", 1, true), frm.lblStatus.caption)
+  frm.cnvImage:snapshot()
+  frm.cmdPen:fire("onClick")
+  eq(frm.cnvImage.pointer, "default")
+  -- A click in the preview picks that tile, in focus.
+  local pw, ph = frm.cnvPreview.width, frm.cnvPreview.height
+  local scale = math.floor(math.min(pw / s.pic.w, ph / s.pic.h))
+  local ox, oy = math.floor((pw - s.pic.w * scale) / 2), math.floor((ph - s.pic.h * scale) / 2)
+  frm.cnvPreview:snapshot()
+  frm.cnvPreview:fire("onMouseDown", ox + scale * 9, oy + scale * 2, 1, false, "")
+  eq(s:tileNumber(), 1, "x 9, y 2 is in tile #1")
+  ok(frm.lblStatus.caption:find("in focus", 1, true), "in focus now")
+  eq(frm.cnvImage.width, 8 * frm.zoom())
+  frm.cnvPreview:fire("onMouseDrag", ox + scale * 2, oy + scale * 20, 1, false, "")
+  eq(s:tileNumber(), 8, "dragging goes from tile to tile")
+  frm.cnvPreview:fire("onMouseUp", ox, oy, 1)
+  frm:fire("onKey", "Escape", "")
+  -- With no tiles, the preview does nothing.
+  frm.Menu1:fire("onClick", "mnuTiles", "", false)
+  frm.cnvPreview:fire("onMouseDown", ox + scale * 9, oy + scale * 2, 1, false, "")
+  ok(not frm.lblStatus.caption:find("in focus", 1, true))
+  frm.Menu1:fire("onClick", "mnuAdvanced", "", false)
+end)
+
 test("form: save and open again", function()
   local file = os.tmpname() .. ".png"
   local before = art(s.pic)

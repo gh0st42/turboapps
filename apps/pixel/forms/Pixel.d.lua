@@ -10,6 +10,7 @@
 ---@field cmdEllipse gui.Button
 ---@field cmdEraser gui.Button
 ---@field cmdFill gui.Button
+---@field cmdHand gui.Button
 ---@field cmdLine gui.Button
 ---@field cmdPen gui.Button
 ---@field cmdPicker gui.Button

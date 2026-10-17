@@ -68,8 +68,12 @@ function Picture:get(x, y)
   return self.px[y * self.w + x + 1]
 end
 
+-- clip, when set, is a box { x0, y0, x1, y1 } (inclusive) that set() keeps
+-- to: every shape and brush goes through set, so none of them leaves it.
 function Picture:set(x, y, c)
   if not self:inside(x, y) then return end
+  local k = self.clip
+  if k and (x < k[1] or y < k[2] or x > k[3] or y > k[4]) then return end
   local i = y * self.w + x + 1
   if self.px[i] == c then return end
   self.px[i] = c
@@ -189,11 +193,18 @@ end
 
 -- fill is the paint bucket: it changes the area of one colour around
 -- x, y, as far as it reaches up, down, left and right, to c. It returns
--- how many pixels it changed.
-function Picture:fill(x, y, c)
+-- how many pixels it changed. With box, { x0, y0, x1, y1 }, it goes no
+-- further than that, as when it fills one tile of a tilemap.
+function Picture:fill(x, y, c, box)
   local target = self:get(x, y)
   if target == nil or target == c then return 0 end
   local w, px, n = self.w, self.px, 0
+  local x0, y0, x1, y1 = 0, 0, w - 1, self.h - 1
+  if box then
+    x0, y0 = math.max(x0, box[1]), math.max(y0, box[2])
+    x1, y1 = math.min(x1, box[3]), math.min(y1, box[4])
+    if x < x0 or x > x1 or y < y0 or y > y1 then return 0 end
+  end
   local stack = { x, y }
   while #stack > 0 do
     local sy = table.remove(stack)
@@ -201,17 +212,17 @@ function Picture:fill(x, y, c)
     -- Walk left to the start of this run, then fill it rightwards, noting
     -- the runs above and below as it goes.
     local row = sy * w
-    while sx > 0 and px[row + sx] == target do sx = sx - 1 end
+    while sx > x0 and px[row + sx] == target do sx = sx - 1 end
     local above, below = false, false
-    while sx < w and px[row + sx + 1] == target do
+    while sx <= x1 and px[row + sx + 1] == target do
       px[row + sx + 1] = c
       n = n + 1
-      if sy > 0 then
+      if sy > y0 then
         local t = px[row - w + sx + 1] == target
         if t and not above then stack[#stack + 1] = sx; stack[#stack + 1] = sy - 1 end
         above = t
       end
-      if sy < self.h - 1 then
+      if sy < y1 then
         local t = px[row + w + sx + 1] == target
         if t and not below then stack[#stack + 1] = sx; stack[#stack + 1] = sy + 1 end
         below = t
@@ -221,6 +232,67 @@ function Picture:fill(x, y, c)
   end
   if n > 0 then self:sync() end
   return n
+end
+
+-- copyBox takes the pixels of a box { x0, y0, x1, y1 } out as a clip:
+-- { w, h, palette, px } with the pixels a row at a time.
+function Picture:copyBox(box)
+  local x0, y0 = math.max(0, box[1]), math.max(0, box[2])
+  local x1, y1 = math.min(self.w - 1, box[3]), math.min(self.h - 1, box[4])
+  local clip = { w = x1 - x0 + 1, h = y1 - y0 + 1, palette = self.palette, px = {} }
+  for y = y0, y1 do
+    for x = x0, x1 do clip.px[#clip.px + 1] = self.px[y * self.w + x + 1] end
+  end
+  return clip
+end
+
+-- pasteBox puts a clip down with its top left at x, y, as much of it as
+-- fits in the box and the picture. A clip from the other palette has each
+-- colour changed to the nearest.
+function Picture:pasteBox(x, y, clip, box)
+  local map
+  if clip.palette ~= self.palette then
+    local from, to = palettes.get(clip.palette), palettes.get(self.palette)
+    map = {}
+    for i = 0, palettes.size(from) - 1 do
+      local c = from[i]
+      map[i] = palettes.nearest(to, c[1], c[2], c[3])
+    end
+  end
+  local old = self.clip
+  self.clip = box
+  for cy = 0, clip.h - 1 do
+    for cx = 0, clip.w - 1 do
+      local c = clip.px[cy * clip.w + cx + 1]
+      if map and c ~= M.CLEAR then c = map[c] or 0 end
+      self:set(x + cx, y + cy, c)
+    end
+  end
+  self.clip = old
+end
+
+-- clearBox makes a box transparent (or c).
+function Picture:clearBox(box, c)
+  local old = self.clip
+  self.clip = box
+  for y = box[2], box[4] do
+    for x = box[1], box[3] do self:set(x, y, c or M.CLEAR) end
+  end
+  self.clip = old
+end
+
+-- cropImage is a box of the picture as an image of its own, for showing a
+-- part of it big.
+function Picture:cropImage(box)
+  local w, h = box[3] - box[1] + 1, box[4] - box[2] + 1
+  local img = png.new(w, h)
+  local colours = self:colours()
+  for y = 0, h - 1 do
+    for x = 0, w - 1 do
+      img:set(x, y, colours[self:get(box[1] + x, box[2] + y)] or "#000000ff")
+    end
+  end
+  return img
 end
 
 function Picture:clear(c)
