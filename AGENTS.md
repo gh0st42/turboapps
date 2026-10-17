@@ -22,6 +22,11 @@ These were agreed with the owner; keep to them.
 - **Never commit without asking.** Finish the work, report it, say what is
   uncommitted and offer a message, then wait. An earlier "commit it" covers
   that one commit only. This holds in `../tlua` too.
+- **Commit messages follow Conventional Commits:** `type(scope): summary`,
+  such as `feat(chipstudio): show a retro scope of the channels as they
+  play`. The types are feat, fix, docs, style, refactor, perf, test, build
+  and chore; the scope is the app or area. The summary is short, lower-case
+  and imperative, with no full stop. This holds in `../tlua` too.
 - **Commit only your own changes.** The owner commits their own work, and
   bumps tlua's version, themselves. Leave their uncommitted files alone and
   unstaged, even when told to "commit it all".
