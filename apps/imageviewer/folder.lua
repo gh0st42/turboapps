@@ -11,8 +11,9 @@ local lfs = require "lfs"
 
 local M = {}
 
--- EXTENSIONS are the files shown: those tlua's png module reads.
-M.EXTENSIONS = { png = true, jpg = true, jpeg = true, gif = true }
+-- EXTENSIONS are the files shown: those tlua's png module reads (the
+-- animated ones, GIF, PNG and WebP, move).
+M.EXTENSIONS = { png = true, jpg = true, jpeg = true, gif = true, webp = true }
 
 -- isImage says whether a file name is one the viewer shows.
 function M.isImage(name)

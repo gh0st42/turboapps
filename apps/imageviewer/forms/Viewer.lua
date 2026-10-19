@@ -4,7 +4,9 @@
 -- lstFiles lists the folder shown: its folders and the pictures the viewer
 -- can show, mixed in the order of their names (folder.lua does the
 -- listing). cnvImage draws the picture picked as big as fits, in the middle
--- of black, and splMain lets the user drag the line between them. There is
+-- of black (an animated GIF, PNG or WebP plays, round and round as it asks,
+-- and Space stops and starts it), and splMain lets the user drag the line
+-- between them. There is
 -- no menu: all of it is done from the keyboard, the list's own keys moving
 -- through it, and Enter or Right opening a folder, Backspace or Left
 -- going up (see Keys below).
@@ -21,6 +23,7 @@ local dir            -- the folder shown
 local rows = {}      -- what lstFiles lists, a row each, as folder.list gives them (".." too)
 local shown          -- the picture on show: { path =, image = } or { path =, why = }
 local timer          -- waiting to read the picture picked
+local playing        -- waiting to show the next frame of an animation
 
 ---------------------------------------------------------------- drawing
 
@@ -67,6 +70,12 @@ local function updateStatus()
       parts[#parts + 1] = ("%d × %d"):format(shown.image.width, shown.image.height)
     end
     parts[#parts + 1] = folder.formatSize(e.size)
+    local f = shown and shown.frames
+    if f and #f > 1 then
+      parts[#parts + 1] = ("frame %d of %d%s"):format(shown.index, #f, shown.paused and ", paused" or "")
+    elseif f and f.truncated then
+      parts[#parts + 1] = "too big to play: its first frame"
+    end
   elseif e then
     parts[#parts + 1] = e.up and "up one folder" or (e.name .. "  (Enter opens it)")
   end
@@ -76,20 +85,79 @@ end
 
 ---------------------------------------------------------------- the picture
 
--- showSelected reads the picture picked, or clears the view for a folder.
+local function stopPlaying()
+  if playing then playing:stop() end
+  playing = nil
+end
+
+local advance
+
+-- wait shows the next frame when the one shown has had its time.
+local function wait()
+  local f = shown and shown.frames
+  if f and #f > 1 and not shown.paused then
+    playing = gui.after(f[shown.index].delay, advance)
+  end
+end
+
+-- advance shows the next frame of an animation. One that is to play only so
+-- many times stops, on its last frame, when it has.
+function advance()
+  playing = nil
+  local f = shown and shown.frames
+  if not f or shown.paused then return end
+  local i = shown.index + 1
+  if i > #f then
+    if f.loops ~= 0 and shown.plays >= f.loops then return end
+    shown.plays = shown.plays + 1
+    i = 1
+  end
+  shown.index, shown.image = i, f[i].image
+  frm.cnvImage:redraw()
+  updateStatus()
+  wait()
+end
+
+-- showSelected reads the picture picked, or clears the view for a folder,
+-- and starts an animation going.
 local function showSelected()
   timer = nil
+  stopPlaying()
   local e = selectedRow()
   if not e then
     shown = nil
   elseif e.dir then
     shown = { why = e.up and "Backspace or Enter goes up" or "Enter opens this folder" }
   else
-    local img, why = png.load(e.path)
-    shown = img and { path = e.path, image = img } or { path = e.path, why = "Cannot show " .. e.name .. "\n\n" .. tostring(why) }
+    local frames, why = png.frames(e.path)
+    if frames then
+      shown = { path = e.path, frames = frames, index = 1, plays = 1, image = frames[1].image }
+    else
+      shown = { path = e.path, why = "Cannot show " .. e.name .. "\n\n" .. tostring(why) }
+    end
   end
   frm.cnvImage:redraw()
   updateStatus()
+  wait()
+end
+
+-- pause stops an animation where it is, or sets it going again (from the
+-- first frame, if it had played its times).
+local function pause()
+  local f = shown and shown.frames
+  if not f or #f < 2 then return false end
+  shown.paused = not shown.paused or nil
+  if shown.paused then
+    stopPlaying()
+  else
+    if shown.index == #f and f.loops ~= 0 and shown.plays >= f.loops then
+      shown.index, shown.image, shown.plays = 1, f[1].image, 1
+      frm.cnvImage:redraw()
+    end
+    wait()
+  end
+  updateStatus()
+  return true
 end
 
 -- picked is called when the row picked changes: the picture is read a
@@ -97,6 +165,7 @@ end
 -- each of them.
 local function picked()
   if timer then timer:stop() end
+  stopPlaying()
   updateStatus()
   timer = gui.after(DELAY, showSelected)
 end
@@ -174,6 +243,7 @@ local KEYS = [[Up, Down, Page Up, Page Down, Home, End   move through the list
 Enter or Right    open the folder picked
 Backspace or Left    go up one folder
 a letter or digit    jump to the next name that starts with it
+Space    stop or start an animation (GIF, PNG, WebP)
 Cmd O (Ctrl O)    choose a folder to open
 Cmd Up (Ctrl Up)    up one folder
 F1    this help]]
@@ -214,6 +284,8 @@ function frm:onKeyPreview(key, text)
   elseif key == "F1" then
     gui.msgbox(KEYS, "ok", "Keyboard")
     return true
+  elseif key == "Space" then
+    return pause()
   elseif key == "Enter" or key == "Right" then
     local e = selectedRow()
     if e and e.dir then enter() return true end
@@ -243,11 +315,18 @@ else
   open(folder.start())
 end
 
+function frm:onClose()
+  if timer then timer:stop() end
+  stopPlaying()
+end
+
 -- Exposed for the tests.
 frm.open = open
 frm.folder = function() return dir end
 frm.entries = function() return rows end
 frm.shown = function() return shown end
 frm.flush = flush
+frm.advance = function() if playing then playing:stop() playing = nil end advance() end
+frm.pause = pause
 
 return frm

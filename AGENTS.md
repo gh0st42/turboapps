@@ -166,13 +166,12 @@ what it is and how it is used. UI text is plain English, without jargon.
   name (file dialogs do for now), BeepBox share URLs.
 - pixel has an Advanced menu (a tilemap grid with tile numbers, copy, cut,
   paste and clear of tiles, focus on one tile, a hand tool). The hand
-  pans with a Scroll's `scrollX` and `scrollY`, which tlua has after
-  0.7.1 (uncommitted in ../tlua when this was written): until a release
-  has them, its test of the hand needs a tlua built from that source.
-- imageviewer lists a folder's folders and its PNG, JPEG and GIF pictures,
-  mixed in the order of their names (what tlua's `png` module reads; WebP
-  is not among them), beside a Splitter's line to drag, and draws the one
-  picked as big as fits on black. It has no menu; Cmd (Ctrl) O, Cmd Up and
+  pans with a Scroll's `scrollX` and `scrollY`, which tlua has from 0.7.2.
+- imageviewer lists a folder's folders and its PNG, JPEG, GIF and WebP
+  pictures, mixed in the order of their names (what tlua's `png` module
+  reads), beside a Splitter's line to drag, and draws the one picked as big
+  as fits on black. Animated GIF, APNG and WebP play from `png.frames`
+  (tlua 0.8.1), a timer per frame; Space stops and starts them. It has no menu; Cmd (Ctrl) O, Cmd Up and
   F1 are keys of the form's. A ListBox keeps Up and Down for
   itself and takes Home, End, Page Up, Page Down and the letters for
   nothing useful, so the form's `onKeyPreview` does those, with Enter,

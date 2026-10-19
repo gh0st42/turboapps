@@ -41,10 +41,10 @@ local function names(list)
 end
 
 test("isImage: the formats the viewer shows, in any case", function()
-  for _, name in ipairs { "a.png", "a.PNG", "a.jpg", "a.JPEG", "a.gif", "x.y.png" } do
+  for _, name in ipairs { "a.png", "a.PNG", "a.jpg", "a.JPEG", "a.gif", "x.y.png", "a.webp", "a.WebP" } do
     ok(folder.isImage(name), name)
   end
-  for _, name in ipairs { "a.txt", "png", "a.png.txt", "a.webp", ".png", "a" } do
+  for _, name in ipairs { "a.txt", "png", "a.png.txt", "a.bmp", ".png", "a" } do
     ok(not folder.isImage(name) or name == ".png", name)
   end
 end)
@@ -255,5 +255,103 @@ test("form: a splitter between the list and the picture", function()
   eq(frm.lstFiles.left + frm.lstFiles.width, frm.cnvImage.left, "side by side, edge to edge")
 end)
 
-os.execute(("rm -rf '%s'"):format(root))
+---------------------------------------------------------------- animations
+
+-- A folder of animated pictures, made from the files in tests/data: six
+-- frames each as a GIF, a PNG and a WebP, a still WebP, and a GIF of two
+-- frames that plays twice.
+local movies = root .. "-movies"
+assert(lfs.mkdir(movies))
+local function copy(from, to)
+  local f = assert(io.open("tests/data/imageviewer/" .. from, "rb"))
+  write(movies .. "/" .. to, f:read("*a"))
+  f:close()
+end
+copy("anim.gif", "anim.gif"); copy("anim.png", "anim.png"); copy("anim.webp", "anim.webp")
+copy("still.webp", "still.webp"); copy("twice.gif", "twice.gif")
+
+test("form: an animation plays, frame by frame, and goes round again", function()
+  eq(names(assert(folder.list(movies))), "anim.gif,anim.png,anim.webp,still.webp,twice.gif")
+  ok(frm.open(movies))
+  eq(list.selected, 2, "the first picture")
+  frm.flush()
+  local shown = frm.shown()
+  eq(#shown.frames, 6); eq(shown.index, 1)
+  ok(shown.image == shown.frames[1].image)
+  ok(frm.lblStatus.caption:find("frame 1 of 6", 1, true), frm.lblStatus.caption)
+  local before = pixel(math.floor(canvas.width / 2), math.floor(canvas.height / 2))
+  frm.advance()
+  eq(frm.shown().index, 2)
+  ok(frm.shown().image == shown.frames[2].image, "the next frame is on show")
+  ok(frm.lblStatus.caption:find("frame 2 of 6", 1, true), frm.lblStatus.caption)
+  canvas:snapshot()
+  for _ = 1, 4 do frm.advance() end
+  eq(frm.shown().index, 6)
+  frm.advance()
+  eq(frm.shown().index, 1, "and round again")
+  eq(frm.shown().plays, 2)
+  -- The same for the PNG and the WebP.
+  for _, row in ipairs { 3, 4 } do
+    list.selected = row
+    frm.lstFiles:fire("onChange")
+    frm.flush()
+    eq(#frm.shown().frames, 6, frm.entries()[row].name)
+    frm.advance()
+    eq(frm.shown().index, 2)
+  end
+end)
+
+test("form: Space stops and starts it", function()
+  list.selected = 2
+  frm.lstFiles:fire("onChange")
+  frm.flush()
+  eq(frm:fire("onKeyPreview", "Space", " "), true)
+  ok(frm.shown().paused)
+  ok(frm.lblStatus.caption:find("paused", 1, true), frm.lblStatus.caption)
+  frm.advance()
+  eq(frm.shown().index, 1, "a paused animation stays where it is")
+  eq(frm:fire("onKeyPreview", "Space", " "), true)
+  ok(not frm.shown().paused)
+  ok(not frm.lblStatus.caption:find("paused", 1, true))
+  frm.advance()
+  eq(frm.shown().index, 2)
+  -- Moving to another picture ends it.
+  list.selected = 6
+  frm.lstFiles:fire("onChange")
+  frm.flush()
+  eq(frm.shown().frames.width, 20)
+  -- A picture that does not move: Space is not the animation's.
+  list.selected = 5 -- still.webp
+  frm.lstFiles:fire("onChange")
+  frm.flush()
+  eq(#frm.shown().frames, 1)
+  eq(frm.shown().image.width, 160)
+  ok(not frm.lblStatus.caption:find("frame", 1, true), "a still has no frames to count")
+  ok(not frm:fire("onKeyPreview", "Space", " "))
+end)
+
+test("form: an animation that plays so many times stops on its last frame", function()
+  list.selected = 6 -- twice.gif: two frames, to go round again once after the first time
+  frm.lstFiles:fire("onChange")
+  frm.flush()
+  eq(frm.shown().frames.loops, 2, "a GIF's count is the times it goes round again, so it plays twice")
+  frm.advance()
+  eq(frm.shown().index, 2)
+  frm.advance()
+  eq(frm.shown().index, 1, "the second time round")
+  eq(frm.shown().plays, 2)
+  frm.advance()
+  eq(frm.shown().index, 2)
+  frm.advance()
+  eq(frm.shown().index, 2, "it has played twice: it stays on its last frame")
+  eq(frm.shown().plays, 2)
+  -- Space plays it again.
+  eq(frm:fire("onKeyPreview", "Space", " "), true)
+  eq(frm:fire("onKeyPreview", "Space", " "), true)
+  eq(frm.shown().index, 1)
+  eq(frm.shown().plays, 1)
+  frm:fire("onClose")
+end)
+
+os.execute(("rm -rf '%s' '%s'"):format(root, movies))
 t.done("imageviewer")
