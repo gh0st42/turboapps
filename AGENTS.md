@@ -8,8 +8,9 @@ has been agreed about how to work. README.md describes the apps.
 
 Desktop apps written in [tlua](../tlua) with its `gui` module, one
 `tlua design` project to a folder under `apps/`, each bundled by the
-Makefile into `dist/<app>.ztl`: calculator, editor, files, pixel, microword,
-microsheets, micronotes, microreader and microbrowser.
+Makefile into `dist/<app>.ztl`: calculator, editor, files, imageviewer, pixel,
+microword, microsheets, micronotes, microreader and microbrowser (and
+chipstudio and desktop).
 
 tlua lives beside this repository in `../tlua`, and the Makefile uses its
 `bin/tlua` when it has been built. It has an AGENTS.md of its own; read it
@@ -168,6 +169,14 @@ what it is and how it is used. UI text is plain English, without jargon.
   pans with a Scroll's `scrollX` and `scrollY`, which tlua has after
   0.7.1 (uncommitted in ../tlua when this was written): until a release
   has them, its test of the hand needs a tlua built from that source.
+- imageviewer lists a folder's folders and its PNG, JPEG and GIF pictures,
+  mixed in the order of their names (what tlua's `png` module reads; WebP
+  is not among them), beside a Splitter's line to drag, and draws the one
+  picked as big as fits on black. It has no menu; Cmd (Ctrl) O, Cmd Up and
+  F1 are keys of the form's. A ListBox keeps Up and Down for
+  itself and takes Home, End, Page Up, Page Down and the letters for
+  nothing useful, so the form's `onKeyPreview` does those, with Enter,
+  Right, Backspace and Left, itself (tested against a real window).
 - files lists the drives Linux automounts (from /proc/self/mounts) and
   ejects them; it is tested against a mount table of the tests' own, and
   has not run on a Linux desktop yet.

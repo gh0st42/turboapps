@@ -10,6 +10,7 @@ local DEFAULT_CATEGORY_MAP = {
   chipstudio = "Games",
   editor = "Office",
   files = "Utilities",
+  imageviewer = "Utilities",
   microbrowser = "Utilities",
   micronotes = "Office",
   microreader = "Office",
