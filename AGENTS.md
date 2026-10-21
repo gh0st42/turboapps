@@ -171,7 +171,10 @@ what it is and how it is used. UI text is plain English, without jargon.
   pictures, mixed in the order of their names (what tlua's `png` module
   reads), beside a Splitter's line to drag, and draws the one picked as big
   as fits on black. Animated GIF, APNG and WebP play from `png.frames`
-  (tlua 0.8.1), a timer per frame; Space stops and starts them. It has no menu; Cmd (Ctrl) O, Cmd Up and
+  (tlua 0.8.1), a timer per frame; Space stops and starts them. The whole
+  window is dark through `gui.colors` (tlua 0.8.2: FLTK's global colours,
+  which a ListBox's text, scrollbars and dialogs follow; a ListBox's own
+  `textColor` does nothing). It has no menu; Cmd (Ctrl) O, Cmd Up and
   F1 are keys of the form's. A ListBox keeps Up and Down for
   itself and takes Home, End, Page Up, Page Down and the letters for
   nothing useful, so the form's `onKeyPreview` does those, with Enter,

@@ -19,6 +19,10 @@ local frm = gui.load "Viewer" --[[@as forms.Viewer]]
 
 local DELAY = 0.08 -- a picture is read this long after the list stops moving
 
+-- The whole program is dark, so that browsing colourful pictures in a dark
+-- room is not a glare: the window and its controls, the list, and the text.
+gui.colors { background = "#1e1e1e", background2 = "#141414", foreground = "#c8c8c8" }
+
 local dir            -- the folder shown
 local rows = {}      -- what lstFiles lists, a row each, as folder.list gives them (".." too)
 local shown          -- the picture on show: { path =, image = } or { path =, why = }
