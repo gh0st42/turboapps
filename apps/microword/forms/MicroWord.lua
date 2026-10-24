@@ -230,12 +230,38 @@ local function setStyle(t, toggle)
   change(function(e) e:setType(t, toggle) end)
 end
 
+-- askTable asks how big a table to make: "3 x 4" is three rows of four.
+local function askTable()
+  local answer = gui.inputbox("Rows and columns, such as 3 x 4:", "Insert Table", "3 x 3")
+  if not answer then return end
+  local r, c = answer:match("^%s*(%d+)%s*[xX*,]%s*(%d+)%s*$")
+  r, c = tonumber(r), tonumber(c)
+  if not r or r < 1 or r > 100 or c < 1 or c > 20 then
+    gui.msgbox("Say how many rows and columns, such as 3 x 4 (up to 100 rows and 20 columns).", "ok", "Insert Table")
+    return
+  end
+  return r, c
+end
+
+-- inTable runs fn on the table the caret is in, or says there is none.
+local function inTable(fn)
+  local e = ed()
+  if not e:tableAt() then
+    gui.msgbox("Put the caret in a table first.", "ok", "Table")
+    return
+  end
+  change(fn)
+end
+
 local help = [[Typing at the start of a paragraph:
   # and a space        Heading 1 (## Heading 2, ### Heading 3)
   - and a space        a bullet list
   1. and a space       a numbered list
   > and a space        a quote
   --- and Enter        a horizontal rule
+  Insert > Table...    a table: click in a cell to type, Tab to the next
+                       (a new row after the last), Escape to leave it;
+                       the Table menu adds and removes rows and columns
 
 In a list, Tab and Shift+Tab move an item in and out,
 and Enter on an empty item ends the list.
@@ -267,6 +293,24 @@ local actions = {
   mnuImage = insertPicture,
   mnuLink = editLink,
   mnuRule = function() change(function(e) e:insertRule() end) end,
+  mnuTable = function()
+    local rows, cols = askTable()
+    if rows then change(function(e) e:insertTable(rows, cols) end) end
+  end,
+  mnuRowAbove = function() inTable(function(e) e:insertRow(false) end) end,
+  mnuRowBelow = function() inTable(function(e) e:insertRow(true) end) end,
+  mnuColLeft = function() inTable(function(e) e:insertColumn(false) end) end,
+  mnuColRight = function() inTable(function(e) e:insertColumn(true) end) end,
+  mnuDelRow = function() inTable(function(e)
+    if not e:deleteRow() then gui.msgbox("A table keeps its first row.", "ok", "Table") end
+  end) end,
+  mnuDelCol = function() inTable(function(e)
+    if not e:deleteColumn() then gui.msgbox("A table keeps one column.", "ok", "Table") end
+  end) end,
+  mnuAlignLeft = function() inTable(function(e) e:setAlign("left") end) end,
+  mnuAlignCenter = function() inTable(function(e) e:setAlign("center") end) end,
+  mnuAlignRight = function() inTable(function(e) e:setAlign("right") end) end,
+  mnuAlignNone = function() inTable(function(e) e:setAlign(false) end) end,
   -- A table of contents lists the headings, each a link to its heading.
   mnuToc = function() change(function(e) e:insertBlock { type = "toc" } end) end,
   mnuBold = function() change(function(e) e:toggle("b") end) end,
@@ -322,6 +366,14 @@ function edit:onMenu()
     "-",
     { "&Link...", editLink },
   }
+  if e:tableAt() then
+    for _, item in ipairs {
+      "-",
+      { "Row &Above", actions.mnuRowAbove }, { "Row &Below", actions.mnuRowBelow },
+      { "Column &Left", actions.mnuColLeft }, { "Column &Right", actions.mnuColRight },
+      { "Delete &Row", actions.mnuDelRow }, { "Delete &Column", actions.mnuDelCol },
+    } do items[#items + 1] = item end
+  end
   local url = e:linkAt()
   if url then
     items[#items + 1] = { "&Open Link", function()

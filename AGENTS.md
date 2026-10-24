@@ -167,6 +167,12 @@ what it is and how it is used. UI text is plain English, without jargon.
 - pixel has an Advanced menu (a tilemap grid with tile numbers, copy, cut,
   paste and clear of tiles, focus on one tile, a hand tool). The hand
   pans with a Scroll's `scrollX` and `scrollY`, which tlua has from 0.7.2.
+- microword and micronotes edit tables in place: MarkdownEdit puts the caret
+  in a cell (`ed.cell`), where typing, the arrows, Tab and Enter work, and
+  `ed:insertTable`, `insertRow`, `insertColumn`, `deleteRow`, `deleteColumn`
+  and `setAlign` are what their Insert and Table menus call (tlua after
+  0.9.0). Cells hold one line of styled text. microreader shows tables
+  through MarkdownView; the microbrowser's Gemini and Gopher pages have none.
 - imageviewer lists a folder's folders and its PNG, JPEG, GIF and WebP
   pictures, mixed in the order of their names (what tlua's `png` module
   reads), beside a Splitter's line to drag, and draws the one picked as big

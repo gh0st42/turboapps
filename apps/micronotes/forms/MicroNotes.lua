@@ -498,6 +498,14 @@ function edit:onMenu()
     { "Insert &Picture...", insertPicture },
     { "Attach &File...", insertFile },
   }
+  if ed:tableAt() then
+    for _, item in ipairs {
+      "-",
+      { "Row &Above", actions.mnuRowAbove }, { "Row &Below", actions.mnuRowBelow },
+      { "Column &Left", actions.mnuColLeft }, { "Column &Right", actions.mnuColRight },
+      { "Delete &Row", actions.mnuDelRow }, { "Delete &Column", actions.mnuDelCol },
+    } do items[#items + 1] = item end
+  end
   if url then
     items[#items + 1] = "-"
     items[#items + 1] = { "&Open Link", function()
@@ -718,6 +726,29 @@ local function format(fn, mark)
   edit:changed()
 end
 
+-- askTable asks how big a table to make: "3 x 4" is three rows of four.
+local function askTable()
+  local answer = gui.inputbox("Rows and columns, such as 3 x 4:", "Insert Table", "3 x 3")
+  if not answer then return end
+  local r, c = answer:match("^%s*(%d+)%s*[xX*,]%s*(%d+)%s*$")
+  r, c = tonumber(r), tonumber(c)
+  if not r or r < 1 or r > 100 or c < 1 or c > 20 then
+    gui.msgbox("Say how many rows and columns, such as 3 x 4 (up to 100 rows and 20 columns).", "ok", "Insert Table")
+    return
+  end
+  return r, c
+end
+
+-- inTable runs fn on the table the caret is in; the Table menu is for the
+-- Edit view.
+local function inTable(fn)
+  if mode == "source" then updateStatus("a table's rows and columns are changed in the Edit view") return end
+  if mode == "read" then setMode("edit") end
+  if not edit.ed:tableAt() then updateStatus("put the caret in a table first") return end
+  fn(edit.ed)
+  edit:changed()
+end
+
 local function setStyle(t, toggle)
   format(function(ed) ed:setType(t, toggle) end)
 end
@@ -829,11 +860,32 @@ local actions = {
   mnuPicture = insertPicture,
   mnuFile = insertFile,
   mnuTable = function()
-    local table_ = "| Column | Column |\n|---|---|\n|  |  |\n"
-    if mode == "source" then source:insert(table_) return end
-    format(function(ed) ed:paste(table_) end)
-    updateStatus("a table's cells are edited in the Source view")
+    local rows, cols = askTable()
+    if not rows then return end
+    if mode == "source" then
+      local head, line, body = {}, {}, {}
+      for k = 1, cols do head[k], line[k], body[k] = "Column " .. k, "---", "" end
+      local text = { "| " .. table.concat(head, " | ") .. " |", "| " .. table.concat(line, " | ") .. " |" }
+      for _ = 2, rows do text[#text + 1] = "| " .. table.concat(body, " | ") .. " |" end
+      source:insert(table.concat(text, "\n") .. "\n")
+      return
+    end
+    format(function(ed) ed:insertTable(rows, cols) end)
   end,
+  mnuRowAbove = function() inTable(function(ed) ed:insertRow(false) end) end,
+  mnuRowBelow = function() inTable(function(ed) ed:insertRow(true) end) end,
+  mnuColLeft = function() inTable(function(ed) ed:insertColumn(false) end) end,
+  mnuColRight = function() inTable(function(ed) ed:insertColumn(true) end) end,
+  mnuDelRow = function() inTable(function(ed)
+    if not ed:deleteRow() then updateStatus("a table keeps its first row") end
+  end) end,
+  mnuDelCol = function() inTable(function(ed)
+    if not ed:deleteColumn() then updateStatus("a table keeps one column") end
+  end) end,
+  mnuAlignLeft = function() inTable(function(ed) ed:setAlign("left") end) end,
+  mnuAlignCenter = function() inTable(function(ed) ed:setAlign("center") end) end,
+  mnuAlignRight = function() inTable(function(ed) ed:setAlign("right") end) end,
+  mnuAlignNone = function() inTable(function(ed) ed:setAlign(false) end) end,
   mnuToc = function()
     if mode == "source" then source:insert("[[toc]]\n") return end
     format(function(ed) ed:paste("[[toc]]\n\n") end)

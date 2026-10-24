@@ -114,6 +114,43 @@ test("form: a table of contents goes in, and its links go to the headings", func
   eq(edit.ed.caret.b, 4)
 end)
 
+test("form: a table is made, filled in cell by cell, and changed from the Table menu", function()
+  local gui = require "gui"
+  local ask, said = "2 x 2", nil
+  gui.inputbox = function() return ask end
+  gui.msgbox = function(text) said = text end
+  edit:load("intro\n")
+  edit.ed:moveToDocument(1)
+  frm.actions.mnuTable()
+  ok(edit.ed.cell, "the caret is in the first cell")
+  typeKeys("A")
+  key("Tab", "\t")
+  typeKeys("B")
+  key("Tab", "\t") typeKeys("1")
+  key("Tab", "\t") typeKeys("2")
+  eq(edit:markdown(), "intro\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n")
+  key("Tab", "\t") -- past the last cell: a new row
+  eq(#edit.ed.blocks[2].rows, 3)
+  frm.actions.mnuColRight()
+  eq(#edit.ed.blocks[2].align, 3)
+  frm.actions.mnuAlignRight()
+  ok(edit:markdown():find("| --- | ---: | --- |", 1, true) or edit:markdown():find("---: |", 1, true), edit:markdown())
+  frm.actions.mnuDelRow()
+  eq(#edit.ed.blocks[2].rows, 2)
+  frm.actions.mnuDelCol()
+  eq(#edit.ed.blocks[2].align, 2)
+  -- Out of the table, the Table menu has nothing to change.
+  key("Escape", "")
+  edit.ed:setCaret { b = 1, o = 0 }
+  frm.actions.mnuRowBelow()
+  eq(said, "Put the caret in a table first.")
+  ask = "many"
+  said = nil
+  frm.actions.mnuTable()
+  ok(said, "a size that is not one is said so")
+  eq(#edit.ed.blocks, 3)
+end)
+
 test("form: save, then open again", function()
   local file = root .. "/form.zmd"
   ok(frm.saveTo(file), "saved")
