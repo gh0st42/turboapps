@@ -529,4 +529,59 @@ test("form: the tabs are kept for next time", function()
   eq(kept[#kept], G .. "/next.gmi")
 end)
 
+test("form: the outline lists a page's headings, and picking one goes to it", function()
+  local list = frm.lstOutline
+  go("about:help")
+  eq(frm.settings().outline, false)
+  eq(list.visible, false, "not there to begin with")
+  eq(view.left, 0)
+  local full = view.width
+  frm.Menu1:fire("onClick", "mnuOutline", "", nil)
+  eq(frm.settings().outline, true)
+  eq(list.visible, true)
+  eq(list.width, 240); eq(view.left, 240); eq(view.width, full - 240, "the page gives it room")
+  eq(list.items[1], "Using microbrowser")
+  eq(list.items[2], "  Tabs"); eq(list.items[3], "  Moving about")
+  eq(#list.items, #frm.outline(), "a line for each heading")
+  ok(#list.items >= 6)
+  -- Picking one goes to it, through the view.
+  local went
+  view.scrollTo = function(_, anchor) went = anchor return true end
+  list.selected = 3
+  list:fire("onChange")
+  eq(went, frm.outline()[3].anchor)
+  ok(went and went ~= "", "an anchor")
+  list.selected = 0
+  went = nil
+  list:fire("onChange")
+  eq(went, nil, "nothing picked, nowhere to go")
+  view.scrollTo = nil
+  -- Another page, another outline: with no headings, it says so.
+  local tabs, i = frm.state()
+  tabs[i].entry = { url = "gemini://x/", title = "x", text = "just words\n" }
+  frm.pick(i)
+  eq(list.items[1], "(no headings)"); eq(#list.items, 1)
+  list.selected = 1
+  list:fire("onChange")
+  -- Headings deeper than the first are indented from the highest there is.
+  tabs[i].entry = { url = "gemini://y/", title = "y", text = "## Two\n\ntext\n\n### Three\n\n## Two again\n" }
+  frm.pick(i)
+  eq(list.items[1], "Two"); eq(list.items[2], "  Three"); eq(list.items[3], "Two again")
+  -- It keeps its width as the window changes size, and the page has the rest.
+  frm.width = frm.width + 100
+  frm:fire("onResize")
+  eq(list.width, 240); eq(view.left, 240); eq(view.width, frm.width - 240)
+  -- It is kept for next time, and puts away again.
+  eq(store.load().outline, true)
+  frm.Menu1:fire("onClick", "mnuOutline", "", nil)
+  eq(frm.settings().outline, false)
+  eq(list.visible, false); eq(view.left, 0); eq(view.width, frm.width)
+  eq(store.load().outline, false)
+  -- A new tab's page is listed when the sidebar comes back.
+  go("about:help")
+  frm.toggleOutline()
+  ok(#list.items >= 6)
+  frm.toggleOutline()
+end)
+
 t.done("microbrowser")

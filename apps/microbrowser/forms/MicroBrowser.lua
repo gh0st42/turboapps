@@ -70,6 +70,56 @@ local function updateButtons()
   frm.cmdBookmarked.visible = marked and true or false
 end
 
+---------------------------------------------------------------- the outline
+
+local OUTLINE = 240 -- how wide the sidebar is
+local outline = {}  -- the headings it lists, as the view gives them
+
+-- layoutOutline puts the sidebar beside the page, or takes it away and gives
+-- the page the room. It is done again when the window changes size, so
+-- that the sidebar keeps its width.
+local function layoutOutline()
+  local list, w = frm.lstOutline, frm.width
+  list.visible = settings.outline
+  if settings.outline then
+    list.left, list.width = 0, OUTLINE
+    list.top, list.height = view.top, view.height
+    view.left, view.width = OUTLINE, w - OUTLINE
+  else
+    view.left, view.width = 0, w
+  end
+end
+
+-- refreshOutline lists the headings of the page shown, indented by their
+-- level (from the highest on the page, so a page of only ## headings is not
+-- all indented), while the sidebar is there.
+local function refreshOutline()
+  if not settings.outline then return end
+  outline = view:headings()
+  local top = math.huge
+  for _, h in ipairs(outline) do top = math.min(top, h.level) end
+  local items = {}
+  for i, h in ipairs(outline) do items[i] = ("  "):rep(h.level - top) .. h.text end
+  if #items == 0 then items[1] = "(no headings)" end
+  frm.lstOutline.items = items
+  frm.lstOutline.selected = 0
+end
+
+-- Picking a heading goes to it (the arrows go from one to the next); a
+-- double click goes on to the page.
+function frm.lstOutline:onChange()
+  local h = outline[self.selected]
+  if h then view:scrollTo(h.anchor) end
+end
+
+function frm.lstOutline:onDoubleClick()
+  view:focus()
+end
+
+function frm:onResize()
+  layoutOutline()
+end
+
 -- render shows the current tab: its page, address and title.
 local function render()
   local t = tab()
@@ -81,6 +131,7 @@ local function render()
   else
     view.text = e.text or ""
   end
+  refreshOutline()
   address.text = t.job and t.target or e.url or ""
   frm.caption = (e.title and e.title ~= "" and e.title .. " — " or "") .. "microbrowser"
   updateTabs()
@@ -446,7 +497,8 @@ local baseMenu = frm.Menu1.items
 -- checks is whether each toggle of the menus is on.
 local function checks()
   local t = tabs[current]
-  return { mnuMono = settings.mono, mnuTerminal = settings.terminal, mnuSource = t and t.source or false }
+  return { mnuMono = settings.mono, mnuTerminal = settings.terminal, mnuSource = t and t.source or false,
+    mnuOutline = settings.outline }
 end
 
 -- updateMenu lists the bookmarks in their menu, after its own items, and
@@ -646,6 +698,15 @@ applyLook = function()
   frm.lblStatus.font = face ~= "" and face or "sans"
 end
 
+-- toggleOutline shows the sidebar of the page's headings, or puts it away.
+local function toggleOutline()
+  settings.outline = not settings.outline
+  layoutOutline()
+  refreshOutline()
+  updateMenu()
+  store.save(settings)
+end
+
 local function toggleLook(key)
   settings[key] = not settings[key]
   applyLook()
@@ -666,6 +727,7 @@ local actions = {
   mnuReload = reload,
   mnuStop = stop,
   mnuSource = toggleSource,
+  mnuOutline = toggleOutline,
   mnuMono = function() toggleLook("mono") end,
   mnuTerminal = function() toggleLook("terminal") end,
   mnuLarger = function() textSize(1) end,
@@ -710,6 +772,7 @@ end
 ---------------------------------------------------------------- starting
 
 applyLook()
+layoutOutline()
 view.contextMenu = linkMenu()
 updateMenu()
 
@@ -735,6 +798,8 @@ frm.open, frm.newTab, frm.closeTab, frm.pick = open, newTab, closeTab, select
 frm.back, frm.forward, frm.reload, frm.stop, frm.up = back, forward, reload, stop, up
 frm.bookmark = bookmark
 frm.toggleLook = toggleLook
+frm.toggleOutline = toggleOutline
+frm.outline = function() return outline end
 frm.settings = function() return settings end
 frm.state = function() return tabs, current end
 

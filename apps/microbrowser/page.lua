@@ -247,6 +247,7 @@ microbrowser reads **Gemini** capsules (`gemini://`) and **Gopher** holes (`goph
 * Gemini pages (`text/gemini`) are shown with their headings, lists, quotes and preformatted text; other text as it is.
 * Gopher menus show what each item is before it: `DIR` a menu, `TXT` a text, `ASK` a search, which asks for the words to search for, `IMG` a picture, `BIN` a file, `WWW` the web.
 * Pictures (PNG, JPEG and GIF) are shown; other files are offered to be saved.
+* **View > Outline** (Cmd+Shift+O) puts the page's headings in a sidebar, indented by level: pick one, with the mouse or the arrows, to go to it. It is there next time if it was when you closed microbrowser.
 * **View > Page Source** (Cmd+U) shows the page as it came; **File > Save Page As** (Cmd+S) saves it.
 * **Cmd+F** finds words on the page, and **Cmd+G** finds them again. **Cmd+=** and **Cmd+-** make the text larger and smaller.
 * **View > Fixed Font** (Cmd+Shift+M) draws pages in a fixed font, as a terminal did, so the pictures Gopher holes draw in letters line up. A VGA font is used if one is installed (Flexi IBM VGA, Perfect DOS VGA 437 and the like), and the computer's fixed font if not.

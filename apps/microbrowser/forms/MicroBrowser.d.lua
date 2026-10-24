@@ -12,6 +12,7 @@
 ---@field cmdReload gui.Button
 ---@field cmdStop gui.Button
 ---@field lblStatus gui.Label
+---@field lstOutline gui.ListBox
 ---@field pnlBar gui.Panel
 ---@field pnlTabs gui.Panel
 ---@field tabBar gui.Object
