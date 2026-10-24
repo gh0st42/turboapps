@@ -34,7 +34,7 @@ The apps need tlua 0.5.3 or later, built with the GUI (`make build` in
 tlua; `make static` has no GUI). Microword, micronotes and microreader need
 0.6.1 or later, whose MarkdownEdit edits Markdown as it looks and goes to its
 headings, whose MarkdownView takes pictures from the program, and whose drops
-on a Tree say where they landed. Passwords on documents, workbooks and notebooks, and the archive window of files, need tlua 0.9.2 (zip encryption) and the release after it, whose `gui.passwordbox` asks for them with dots shown. Editing a table's cells in microword and micronotes needs the tlua that follows 0.9.0 (`insertTable` and the cell editing of MarkdownEdit); reading tables, in microreader and micronotes' Read view, works with any 0.6.1 or later. Microsheets saves charts as PNG with
+on a Tree say where they landed. Passwords on documents, workbooks and notebooks, and the archive window of files, need tlua 0.9.3: 0.9.2 has the zip encryption, 0.9.3 the `gui.passwordbox` that asks for the password with dots shown. Editing a table's cells in microword and micronotes needs tlua 0.9.1 or later (`insertTable` and the cell editing of MarkdownEdit); reading tables, in microreader and micronotes' Read view, works with any 0.6.1 or later. Microsheets saves charts as PNG with
 `canvas:snapshot`. Microbrowser needs 0.6.3 or later, whose TLS reads
 what has come without waiting, whose coroutines outlive the chunk that
 made them, and whose MarkdownView draws in any installed font and in

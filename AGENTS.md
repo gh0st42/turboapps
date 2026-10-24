@@ -169,7 +169,7 @@ what it is and how it is used. UI text is plain English, without jargon.
   pans with a Scroll's `scrollX` and `scrollY`, which tlua has from 0.7.2.
 - microword, microsheets and micronotes can encrypt what they save (File >
   Set Password: all of the zip, AES-256, with tlua 0.9.2's `zip` and
-  `gui.passwordbox` after it); the document modules take a `password` on
+  0.9.3's `gui.passwordbox`); the document modules take a `password` on
   load and save, and a load that fails for the password gives `nil, why,
   "locked"` so the form asks again. File names stay readable in a zip
   whatever is done. microreader only opens such books. files opens zip
@@ -178,8 +178,7 @@ what it is and how it is used. UI text is plain English, without jargon.
 - microword and micronotes edit tables in place: MarkdownEdit puts the caret
   in a cell (`ed.cell`), where typing, the arrows, Tab and Enter work, and
   `ed:insertTable`, `insertRow`, `insertColumn`, `deleteRow`, `deleteColumn`
-  and `setAlign` are what their Insert and Table menus call (tlua after
-  0.9.0). Cells hold one line of styled text. microreader shows tables
+  and `setAlign` are what their Insert and Table menus call (tlua 0.9.1). Cells hold one line of styled text. microreader shows tables
   through MarkdownView; the microbrowser's Gemini and Gopher pages have none.
 - imageviewer lists a folder's folders and its PNG, JPEG, GIF and WebP
   pictures, mixed in the order of their names (what tlua's `png` module
