@@ -16,6 +16,7 @@ function frm.ask(settings)
   frm.chkFoldersFirst.checked = settings.foldersFirst
   frm.chkDescending.checked = settings.descending
   frm.chkConfirm.checked = settings.confirmDelete
+  frm.chkApps.checked = settings.openWithApps
   for i, s in ipairs(SORTS) do
     if s == settings.sortBy then frm.cboSort.selected = i end
   end
@@ -30,6 +31,7 @@ function frm.cmdOK:onClick()
     foldersFirst = frm.chkFoldersFirst.checked,
     descending = frm.chkDescending.checked,
     confirmDelete = frm.chkConfirm.checked,
+    openWithApps = frm.chkApps.checked,
     sortBy = SORTS[frm.cboSort.selected] or "name",
   }
   frm:close()

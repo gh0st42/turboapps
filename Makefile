@@ -47,6 +47,7 @@ test:
 	    $(TLUA) -p apps/$$a -p tests tests/$${a}_test.lua || exit 1; \
 	  fi; \
 	done
+	@$(TLUA) -p apps/files -p tests tests/openwith_test.lua
 
 check: test
 	$(TLUA) tools/layouts.lua --check $(APPS:%=apps/%)

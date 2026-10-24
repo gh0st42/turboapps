@@ -4,6 +4,7 @@
 
 ---@class forms.Settings: gui.Form
 ---@field cboSort gui.ComboBox
+---@field chkApps gui.CheckBox
 ---@field chkConfirm gui.CheckBox
 ---@field chkDescending gui.CheckBox
 ---@field chkFoldersFirst gui.CheckBox

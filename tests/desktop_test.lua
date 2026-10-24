@@ -134,4 +134,23 @@ test("applyCategories overrides runtime mapping", function()
   catalog.applyCategories(old)
 end)
 
+test("form: a file is opened in the app of ours for it", function()
+  local gui = require "gui"
+  local frm = require "forms.Desktop"
+  local started, said
+  local realSpawn, realMsgbox = gui.spawn, gui.msgbox
+  gui.spawn = function(cmd) started = cmd return {} end
+  gui.msgbox = function(text) said = text return "ok" end
+  frm.openFile("/pics/cat.png")
+  ok(started, "started something")
+  ok(started[2]:find("imageviewer", 1, true), started[2])
+  eq(started[3], "/pics/cat.png")
+  ok(frm.lblStatus.caption:find("Opened cat.png in Image Viewer", 1, true), frm.lblStatus.caption)
+  started = nil
+  frm.openFile("/pics/program.exe")
+  eq(started, nil)
+  ok(said and said:find("no app here for program.exe", 1, true), tostring(said))
+  gui.spawn, gui.msgbox = realSpawn, realMsgbox
+end)
+
 t.done("desktop")

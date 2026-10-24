@@ -183,6 +183,19 @@ what it is and how it is used. UI text is plain English, without jargon.
   itself and takes Home, End, Page Up, Page Down and the letters for
   nothing useful, so the form's `onKeyPreview` does those, with Enter,
   Right, Backspace and Left, itself (tested against a real window).
+- files selects several rows (FileList's `selection`), cuts, copies and
+  pastes them: `fs.paste` makes a job (a coroutine, stepped from a timer so
+  the window never waits, stopped with `job:cancel()`), and names a copy
+  that would overwrite "a copy.txt". Moving is a rename, or a copy and a
+  delete across disks. Copies keep the time changed and an executable's
+  permissions (by `chmod` through the shell); links are copied as links.
+  Dragging files between folders is not done. A double click opens a file
+  in the app of ours for it (openwith.lua: `TYPES` by extension, found in
+  a bundle beside the program, else in `TURBOAPPS_ROOT`, the folder above
+  the program or the current one); the Desktop opens a file the same way.
+  openwith.lua is the same file in apps/files and apps/desktop (a bundle
+  holds its own): change one, copy it over the other; tests/openwith_test.lua
+  checks they match, and `make test` runs it.
 - files lists the drives Linux automounts (from /proc/self/mounts) and
   ejects them; it is tested against a mount table of the tests' own, and
   has not run on a Linux desktop yet.

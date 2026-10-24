@@ -14,6 +14,19 @@ assert(lfs.mkdir(root))
 root = fs.normalize(root)
 fs.settingsFile = root .. "/settings.lua"
 
+-- The apps of ours that Files may open things in: a turboapps of the tests'
+-- own, with the image viewer made as a bundle and the editor as a folder.
+local openwith = require "openwith"
+local turbo = root .. "/turbo"
+lfs.mkdir(turbo); lfs.mkdir(turbo .. "/apps"); lfs.mkdir(turbo .. "/dist")
+lfs.mkdir(turbo .. "/apps/editor")
+do
+  for _, f in ipairs { turbo .. "/Makefile", turbo .. "/dist/imageviewer.ztl", turbo .. "/apps/editor/main.lua" } do
+    local h = assert(io.open(f, "wb")); h:close()
+  end
+end
+openwith.ctx = { env = turbo, arg0 = "", cwd = "/" }
+
 local function write(path, text)
   local f = assert(io.open(path, "wb"))
   f:write(text or "")
@@ -329,10 +342,10 @@ end
 
 test("context menu: what it offers depends on what is clicked", function()
   frm.go(box)
-  eq(itemNames(frm.menuFor(rowNamed("beta"))), "open system - rename delete - copyPath copyName - newFolder")
-  eq(itemNames(frm.menuFor(rowNamed("app.ztl"))), "run - rename delete - copyPath copyName - newFolder")
-  eq(itemNames(frm.menuFor(rowNamed("Beta.lua"))), "open run - rename delete - copyPath copyName - newFolder")
-  eq(itemNames(frm.menuFor(0)), "newFolder - hidden &Sort By refresh - copyFolderPath system - settings")
+  eq(itemNames(frm.menuFor(rowNamed("beta"))), "open system - cut copy paste - rename delete - copyPath copyName - newFolder")
+  eq(itemNames(frm.menuFor(rowNamed("app.ztl"))), "run - cut copy paste - rename delete - copyPath copyName - newFolder")
+  eq(itemNames(frm.menuFor(rowNamed("Beta.lua"))), "open run Open &With - cut copy paste - rename delete - copyPath copyName - newFolder")
+  eq(itemNames(frm.menuFor(0)), "newFolder paste - hidden &Sort By refresh - copyFolderPath system - settings")
 end)
 
 test("context menu: a right click selects the row under it", function()
@@ -357,7 +370,7 @@ test("context menu: its items do what they say", function()
   eq(#list.entries, 7)
   hidden[2]("Show Hidden Files", false)
   eq(#list.entries, 5)
-  local sortItems = items[4][2]
+  local sortItems = items[5][2]
   sortItems[3][2]() -- by modified
   eq(frm.state().settings.sortBy, "modified")
   frm.applySettings { sortBy = "name", descending = false }
@@ -414,6 +427,333 @@ test("form: drives are among the places, and eject", function()
   ok(answers[1] and answers[1]:find("target is busy"), tostring(answers[1]))
   ok(frm.lblStatus.caption:find("sd was not ejected"), frm.lblStatus.caption)
   gui.spawn, fs.which, gui.msgbox = realSpawn, realWhich, realMsgbox
+end)
+
+---------------------------------------------------------------- copying and moving
+
+local function readAll(path)
+  local f = assert(io.open(path, "rb"))
+  local s = f:read("*a")
+  f:close()
+  return s
+end
+
+-- A folder to copy from, and one to copy into.
+local src, dst = root .. "/src", root .. "/dst"
+local function makeSource()
+  fs.remove(src); fs.remove(dst)
+  lfs.mkdir(src); lfs.mkdir(dst)
+  lfs.mkdir(src .. "/tree"); lfs.mkdir(src .. "/tree/inner")
+  write(src .. "/a.txt", "alpha")
+  write(src .. "/b.txt", "beta")
+  write(src .. "/tree/one.txt", "one"); write(src .. "/tree/inner/two.txt", "two")
+end
+
+-- run does a whole job, a step at a time, with a small budget so that it takes several.
+local function run(job, budget)
+  local steps = 0
+  repeat steps = steps + 1 until job:step(budget or 4) or steps > 10000
+  return steps
+end
+
+test("a name for a copy: not one that is taken", function()
+  makeSource()
+  eq(fs.uniqueName(src, "new.txt"), "new.txt")
+  eq(fs.uniqueName(src, "a.txt"), "a copy.txt")
+  write(src .. "/a copy.txt", "")
+  eq(fs.uniqueName(src, "a.txt"), "a copy 2.txt")
+  eq(fs.uniqueName(src, "tree", true), "tree copy")
+  write(src .. "/.bashrc", "")
+  eq(fs.uniqueName(src, ".bashrc"), ".bashrc copy", "a dot is not an extension")
+  write(src .. "/archive.tar.gz", "")
+  eq(fs.uniqueName(src, "archive.tar.gz"), "archive.tar copy.gz")
+end)
+
+test("size of a file and of a folder", function()
+  makeSource()
+  eq(fs.size(src .. "/a.txt"), 5)
+  eq(fs.size(src .. "/tree"), 6)
+  eq(fs.size(src .. "/none"), 0)
+end)
+
+test("paste: copies files and folders, a step at a time", function()
+  makeSource()
+  write(src .. "/big.bin", ("x"):rep(5000))
+  local a = lfs.attributes(src .. "/a.txt")
+  lfs.touch(src .. "/a.txt", a.access, 1000000000)
+  local job = fs.paste({ src .. "/a.txt", src .. "/tree", src .. "/big.bin" }, dst, false)
+  eq(#job.items, 3); eq(job.total, 5 + 6 + 5000); eq(job.finished, false)
+  ok(run(job, 1000) > 5, "the big file takes several steps")
+  eq(job.finished, true); eq(job.count, 3); eq(#job.errors, 0); eq(job.bytes, job.total)
+  eq(readAll(dst .. "/a.txt"), "alpha")
+  eq(readAll(dst .. "/tree/inner/two.txt"), "two")
+  eq(#readAll(dst .. "/big.bin"), 5000)
+  eq(lfs.attributes(dst .. "/a.txt", "modification"), 1000000000, "it keeps the time it was changed")
+  ok(fs.exists(src .. "/a.txt") and fs.exists(src .. "/tree/one.txt"), "a copy leaves the original")
+  eq(#job.results, 3); eq(job.results[2], dst .. "/tree")
+  -- Again: nothing is overwritten, the copies are named for it.
+  job = fs.paste({ src .. "/a.txt", src .. "/tree" }, dst, false)
+  run(job)
+  eq(readAll(dst .. "/a copy.txt"), "alpha")
+  eq(readAll(dst .. "/tree copy/one.txt"), "one")
+  eq(job.results[1], dst .. "/a copy.txt")
+  -- Into the folder they are in: a duplicate.
+  job = fs.paste({ src .. "/b.txt" }, src, false)
+  run(job)
+  eq(readAll(src .. "/b copy.txt"), "beta")
+end)
+
+test("paste: a copy keeps an executable executable", function()
+  if fs.windows then return end
+  makeSource()
+  write(src .. "/run.sh", "#!/bin/sh\n")
+  os.execute("chmod 755 '" .. src .. "/run.sh'")
+  local job = fs.paste({ src .. "/run.sh" }, dst, false)
+  run(job)
+  eq(lfs.attributes(dst .. "/run.sh", "permissions"), "rwxr-xr-x")
+end)
+
+test("paste: moves, and a move to where it is does nothing", function()
+  makeSource()
+  local job = fs.paste({ src .. "/a.txt", src .. "/tree" }, dst, true)
+  run(job)
+  eq(job.count, 2)
+  ok(not fs.exists(src .. "/a.txt") and not fs.exists(src .. "/tree"), "gone from where they were")
+  eq(readAll(dst .. "/a.txt"), "alpha"); eq(readAll(dst .. "/tree/inner/two.txt"), "two")
+  job = fs.paste({ dst .. "/a.txt" }, dst, true)
+  eq(job.skipped, 1); eq(#job.items, 0); eq(job.finished, true)
+  -- A name that is taken: the one moved is named for it.
+  write(src .. "/a.txt", "again")
+  job = fs.paste({ src .. "/a.txt" }, dst, true)
+  run(job)
+  eq(readAll(dst .. "/a copy.txt"), "again"); eq(readAll(dst .. "/a.txt"), "alpha")
+end)
+
+test("paste: what cannot be done is said", function()
+  makeSource()
+  local job = fs.paste({ src .. "/tree" }, src .. "/tree/inner", false)
+  eq(#job.errors, 1); ok(job.errors[1]:find("cannot go into itself"), job.errors[1]); eq(job.finished, true)
+  job = fs.paste({ src .. "/gone.txt", src .. "/a.txt" }, dst, false)
+  eq(#job.errors, 1); ok(job.errors[1]:find("not there any more"), job.errors[1])
+  run(job)
+  eq(job.count, 1, "the rest goes on")
+  -- Into a folder that is not there.
+  job = fs.paste({ src .. "/b.txt" }, root .. "/nowhere", false)
+  run(job)
+  eq(job.count, 0); eq(#job.errors, 1)
+end)
+
+test("paste: stopped, it leaves what is done and no half of a file", function()
+  makeSource()
+  write(src .. "/big.bin", ("x"):rep(9000))
+  local job = fs.paste({ src .. "/a.txt", src .. "/big.bin", src .. "/b.txt" }, dst, false)
+  job:step(1000)  -- a.txt, and the start of big.bin
+  job:cancel()
+  eq(job:step(1000), true)
+  eq(job.cancelled, true); eq(job.count, 1)
+  eq(readAll(dst .. "/a.txt"), "alpha")
+  ok(not fs.exists(dst .. "/big.bin"), "the half copy is taken away")
+  ok(not fs.exists(dst .. "/b.txt"), "and the rest was not started")
+end)
+
+---------------------------------------------------------------- selecting, cutting, copying, pasting
+
+test("form: several rows are selected with Shift and Cmd", function()
+  local gui = require "gui"
+  makeSource()
+  write(src .. "/c.txt", "c")
+  frm.go(src)
+  -- tree, a.txt, b.txt, c.txt (folders first)
+  eq(#list.entries, 4)
+  list:pick(1)
+  key("Shift+Down"); key("Shift+Down")
+  eq(#frm.selected(), 3); eq(list.current, 3)
+  ok(frm.lblStatus.caption:find("3 selected", 1, true), frm.lblStatus.caption)
+  key("Shift+Up")
+  eq(#frm.selected(), 2)
+  list:pick(2)
+  eq(#frm.selected(), 1, "a plain move is one again")
+  -- A click with Shift, and with Cmd (or Ctrl).
+  list:fire("onMouseDown", 40, 22 + 20 * 3 + 5, 1, false, "Shift")
+  eq(#frm.selected(), 3)
+  list:fire("onMouseDown", 40, 22 + 20 * 2 + 5, 1, false, gui.platform == "darwin" and "Cmd" or "Ctrl")
+  eq(#frm.selected(), 2, "taken out")
+  eq(frm.selected()[1].name, "a.txt"); eq(frm.selected()[2].name, "c.txt")
+  list:fire("onMouseDown", 40, 22 + 5, 1, false, gui.platform == "darwin" and "Cmd" or "Ctrl")
+  eq(#frm.selected(), 3, "put in, in the order of the list")
+  eq(frm.selected()[1].name, "tree")
+  frm.Menu1:fire("onClick", "mnuSelectAll", "", nil)
+  eq(#frm.selected(), 4)
+  key("Cmd+a"); eq(#frm.selected(), 4)
+  -- A right click on a row in the selection keeps the selection.
+  local asked
+  local was = list.onMenu
+  list.onMenu = function(_, i) asked = i end
+  list:fire("onMouseDown", 40, 22 + 20 * 2 + 5, 3, false, "")
+  eq(asked, 3); eq(#frm.selected(), 4)
+  list.onMenu = was
+  -- Going to another folder leaves nothing selected there.
+  frm.go(src .. "/tree")
+  eq(#frm.selected(), 1)
+  frm.go(src)
+  eq(#frm.selected(), 1)
+end)
+
+test("form: copy, then paste into another folder", function()
+  makeSource()
+  frm.go(src)
+  eq(frm.Menu1.items[2][2][3].enabled, false, "nothing to paste yet")
+  list:selectNames { "a.txt", "tree" }
+  frm.Menu1:fire("onClick", "mnuCopy", "", nil)
+  ok(frm.lblStatus.caption:find("Copied 2 items", 1, true), frm.lblStatus.caption)
+  eq(frm.clipboard().cut, false)
+  eq(frm.Menu1.items[2][2][3].enabled, true, "now there is")
+  frm.go(dst)
+  frm.Menu1:fire("onClick", "mnuPaste", "", nil)
+  ok(frm.pasting(), "going on")
+  ok(frm.lblStatus.caption:find("Copying 1 of 2", 1, true), frm.lblStatus.caption)
+  eq(frm.Menu1.items[2][2][3].enabled, false, "not while one is")
+  local n = 0
+  while frm.pasting() and n < 100 do frm.pasting().tick() n = n + 1 end
+  eq(frm.pasting(), nil)
+  eq(readAll(dst .. "/a.txt"), "alpha"); eq(readAll(dst .. "/tree/inner/two.txt"), "two")
+  ok(fs.exists(src .. "/a.txt"), "a copy leaves the original")
+  ok(frm.lblStatus.caption:find("Pasted 2 items", 1, true), frm.lblStatus.caption)
+  eq(#frm.selected(), 2, "what was pasted is selected")
+  ok(frm.clipboard(), "a copy can be pasted again")
+  -- Again, here: the copies are named for what is there.
+  frm.Menu1:fire("onClick", "mnuPaste", "", nil)
+  while frm.pasting() do frm.pasting().tick() end
+  ok(fs.exists(dst .. "/a copy.txt") and fs.exists(dst .. "/tree copy"))
+end)
+
+test("form: cut moves, and the clipboard is empty after", function()
+  makeSource()
+  frm.go(src)
+  list:selectNames { "b.txt" }
+  frm.Menu1:fire("onClick", "mnuCut", "", nil)
+  ok(frm.lblStatus.caption:find("Cut 1 item", 1, true), frm.lblStatus.caption)
+  ok(fs.exists(src .. "/b.txt"), "it moves when it is pasted, not before")
+  frm.go(dst)
+  frm.Menu1:fire("onClick", "mnuPaste", "", nil)
+  while frm.pasting() do frm.pasting().tick() end
+  eq(readAll(dst .. "/b.txt"), "beta")
+  ok(not fs.exists(src .. "/b.txt"), "gone from where it was")
+  ok(frm.lblStatus.caption:find("Moved 1 item", 1, true), frm.lblStatus.caption)
+  eq(frm.clipboard(), nil)
+  eq(frm.Menu1.items[2][2][3].enabled, false)
+  -- Pasting in the folder it was cut from leaves it be, and says so.
+  list:selectNames { "b.txt" }
+  frm.Menu1:fire("onClick", "mnuCut", "", nil)
+  frm.Menu1:fire("onClick", "mnuPaste", "", nil)
+  ok(frm.lblStatus.caption:find("Moved 0 items, 1 was there already", 1, true), frm.lblStatus.caption)
+  eq(readAll(dst .. "/b.txt"), "beta")
+end)
+
+test("form: Escape stops a paste, and what could not be pasted is said", function()
+  local gui = require "gui"
+  makeSource()
+  write(src .. "/big.bin", ("x"):rep(9 * 1024 * 1024))
+  frm.go(src)
+  list:selectNames { "big.bin", "b.txt" }
+  frm.Menu1:fire("onClick", "mnuCopy", "", nil)
+  frm.go(dst)
+  frm.Menu1:fire("onClick", "mnuPaste", "", nil)
+  frm.pasting().tick() -- the first step of the big file
+  ok(frm.pasting(), "still at it")
+  eq(frm:fire("onKey", "Escape", ""), true)
+  while frm.pasting() do frm.pasting().tick() end
+  ok(frm.lblStatus.caption:find("Stopped", 1, true), frm.lblStatus.caption)
+  ok(not fs.exists(dst .. "/big.bin"), "no half of a file")
+  -- A folder into itself is said, in a message.
+  local said
+  local realMsgbox = gui.msgbox
+  gui.msgbox = function(text) said = text return "ok" end
+  frm.go(src)
+  list:selectNames { "tree" }
+  frm.Menu1:fire("onClick", "mnuCopy", "", nil)
+  frm.go(src .. "/tree/inner")
+  frm.Menu1:fire("onClick", "mnuPaste", "", nil)
+  ok(said and said:find("cannot go into itself", 1, true), tostring(said))
+  eq(frm.pasting(), nil)
+  gui.msgbox = realMsgbox
+end)
+
+test("form: delete takes everything selected", function()
+  local gui = require "gui"
+  makeSource()
+  frm.go(src)
+  list:selectNames { "a.txt", "b.txt" }
+  local asked
+  local realMsgbox = gui.msgbox
+  gui.msgbox = function(text) asked = text return "yes" end
+  frm.Menu1:fire("onClick", "mnuDelete", "", nil)
+  ok(asked and asked:find("Delete these 2 items", 1, true), tostring(asked))
+  ok(not fs.exists(src .. "/a.txt") and not fs.exists(src .. "/b.txt"))
+  ok(fs.exists(src .. "/tree"), "the rest is left")
+  -- Rename is for one.
+  list:selectNames { "tree" }
+  eq(#frm.selected(), 1)
+  makeSource()
+  frm.go(src)
+  list:selectNames { "a.txt", "b.txt" }
+  frm.Menu1:fire("onClick", "mnuRename", "", nil)
+  ok(frm.lblStatus.caption:find("one item at a time", 1, true), frm.lblStatus.caption)
+  gui.msgbox = realMsgbox
+end)
+
+---------------------------------------------------------------- opening in our own apps
+
+test("form: a picture opens in the image viewer, and Open With offers the others", function()
+  local gui = require "gui"
+  local pics = root .. "/pics"
+  lfs.mkdir(pics)
+  write(pics .. "/cat.png", ""); write(pics .. "/data.bin", ""); write(pics .. "/notes.txt", "")
+  frm.go(pics)
+  local started
+  local realSpawn = gui.spawn
+  gui.spawn = function(cmd) started = cmd return {} end
+  local function rowOf(name)
+    for i, r in ipairs(list.entries) do if r.name == name then return i end end
+  end
+  frm.applySettings { openWithApps = true }
+  list:pick(rowOf("cat.png"))
+  list:fire("onOpen", list.current)
+  eq(started[2], turbo .. "/dist/imageviewer.ztl"); eq(started[3], pics .. "/cat.png")
+  ok(frm.lblStatus.caption:find("Opened cat.png in Image Viewer", 1, true), frm.lblStatus.caption)
+  -- A text file in the editor, which is only a folder here.
+  list:pick(rowOf("notes.txt"))
+  list:fire("onOpen", list.current)
+  eq(started[2], turbo .. "/apps/editor/main.lua"); eq(started[3], pics .. "/notes.txt")
+  -- What no app of ours opens goes to the system.
+  list:pick(rowOf("data.bin"))
+  list:fire("onOpen", list.current)
+  eq(started[1], "open"); eq(started[2], pics .. "/data.bin")
+  -- The menu: the apps there are for it (pixel is not made here), and the system's.
+  local menu = frm.menuFor(rowOf("cat.png"))
+  local with
+  for _, it in ipairs(menu) do if type(it) == "table" and it[1] == "Open &With" then with = it[2] end end
+  ok(with, "Open With")
+  eq(itemNames(with), "with-imageviewer - with-system")
+  with[1][2]()
+  eq(started[2], turbo .. "/dist/imageviewer.ztl")
+  with[3][2]()
+  eq(started[1], "open")
+  -- A file nothing of ours opens has no such menu.
+  for _, it in ipairs(frm.menuFor(rowOf("data.bin"))) do ok(not (type(it) == "table" and it[1] == "Open &With")) end
+  -- Turned off, everything goes to the system.
+  frm.applySettings { openWithApps = false }
+  list:pick(rowOf("cat.png"))
+  list:fire("onOpen", list.current)
+  eq(started[1], "open"); eq(started[2], pics .. "/cat.png")
+  frm.applySettings { openWithApps = true }
+  -- An app that cannot be found: the system opens it.
+  openwith.ctx = { env = "", arg0 = "", cwd = "/" }
+  list:pick(rowOf("cat.png"))
+  list:fire("onOpen", list.current)
+  eq(started[1], "open")
+  openwith.ctx = { env = turbo, arg0 = "", cwd = "/" }
+  gui.spawn = realSpawn
 end)
 
 -- Tidy up.

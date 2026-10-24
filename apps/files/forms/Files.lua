@@ -7,6 +7,7 @@
 
 local gui = require "gui"
 local fs = require "fs"
+local openwith = require "openwith"
 local settingsForm = require "forms.Settings"
 local frm = gui.load "Files" --[[@as forms.Files]]
 
@@ -21,12 +22,13 @@ local SORTS = { "name", "size", "modified", "kind" }
 
 ---------------------------------------------------------------- showing
 
-local function setMenuChecked(name, on)
+-- setMenuItem sets a field (checked, enabled) of the menu item called name.
+local function setMenuItem(name, field, on)
   local items = frm.Menu1.items
   local function walk(list)
     for _, item in ipairs(list) do
       if type(item) == "table" then
-        if item.name == name then item.checked = on end
+        if item.name == name then item[field] = on end
         if type(item[2]) == "table" then walk(item[2]) end
       end
     end
@@ -35,13 +37,23 @@ local function setMenuChecked(name, on)
   frm.Menu1.items = items
 end
 
+local function setMenuChecked(name, on) setMenuItem(name, "checked", on) end
+
+local clip      -- what was cut or copied: { paths = {...}, cut = true or false }
+local pasting   -- the job being done: { job =, timer = }
+
 local function updateStatus()
   local parts = {}
   local n = #entries
   parts[1] = ("  %d %s"):format(n, n == 1 and "item" or "items")
   if hiddenCount > 0 then parts[1] = parts[1] .. (", %d hidden"):format(hiddenCount) end
+  local rows = frm.lstFiles:selectedRows()
   local e = frm.lstFiles:selectedRow()
-  if e then
+  if #rows > 1 then
+    local size = 0
+    for _, r in ipairs(rows) do size = size + (r.entry.size or 0) end
+    parts[#parts + 1] = ("%d selected"):format(#rows) .. (size > 0 and ("  " .. fs.formatSize(size)) or "")
+  elseif e then
     parts[#parts + 1] = e.entry.name .. (e.entry.size and ("  " .. fs.formatSize(e.entry.size)) or "")
     if e.entry.name:lower():match("%.ztl$") then parts[#parts + 1] = "Enter or double-click runs it" end
   end
@@ -69,6 +81,8 @@ end
 
 -- show reads the folder again and shows it, keeping the selection on
 -- selectName when it is there.
+local updateEdit -- below
+
 local function show(selectName)
   local list, err = fs.list(dir, settings.showHidden)
   if not list then
@@ -86,6 +100,7 @@ local function show(selectName)
   frm.cmdForward.enabled = #history.forward > 0
   frm.cmdUp.enabled = fs.parent(dir) ~= dir
   updateStatus()
+  updateEdit()
 end
 
 -- go shows another folder. how is "visit" (the default), or "history" for
@@ -101,6 +116,7 @@ local function go(path, how, selectName)
   end
   if how ~= "history" then history:visit(dir, path) end
   dir = path
+  frm.lstFiles.selection = {} -- what was selected there is not selected here
   show(selectName)
   return true
 end
@@ -125,11 +141,11 @@ end
 -- run starts a tlua program, a .ztl bundle or a .lua script, with the tlua
 -- this is running on, beside this one. What it says on stderr is shown if
 -- it fails.
-local function run(path)
+local function run(path, file)
   local errors = {}
   local ok, err = pcall(gui.spawn, {
-    gui.interpreter, path,
-    dir = fs.parent(path),
+    gui.interpreter, path, file,
+    dir = fs.parent(file or path),
     onOutput = function(line, stream)
       if stream == "stderr" then
         errors[#errors + 1] = line
@@ -157,6 +173,19 @@ local function openWithSystem(path)
   if not ok then gui.msgbox(("Cannot open %s.\n\n%s"):format(path, tostring(err)), "ok", "Files") end
 end
 
+-- openWithApp opens a file in one of turboapps' own apps; false when the
+-- app cannot be found.
+local function openWithApp(name, path)
+  local cmd = openwith.command(name, path, gui.interpreter)
+  if not cmd then return false end
+  run(cmd[2], path)
+  frm.lblStatus.caption = ("  Opened %s in %s"):format(fs.basename(path), openwith.TITLES[name] or name)
+  return true
+end
+
+-- open opens what is picked: a folder is gone into, a .ztl is run, and a file
+-- is opened in the app of ours for it when there is one (and that is not
+-- turned off in the settings), else in the system's own program.
 local function open(e)
   if not e then return end
   if e.dir and fs.extension(e.name) ~= "app" then
@@ -164,13 +193,21 @@ local function open(e)
   elseif fs.extension(e.name) == "ztl" then
     run(e.path)
   else
-    openWithSystem(e.path)
+    local app = settings.openWithApps and openwith.available(e.path)[1]
+    if not (app and openWithApp(app, e.path)) then openWithSystem(e.path) end
   end
 end
 
 local function current()
   local row = frm.lstFiles:selectedRow()
   return row and row.entry
+end
+
+-- selected is every entry selected, in the order of the list.
+local function selected()
+  local out = {}
+  for _, row in ipairs(frm.lstFiles:selectedRows()) do out[#out + 1] = row.entry end
+  return out
 end
 
 ---------------------------------------------------------------- changing things
@@ -189,6 +226,10 @@ end
 local function rename()
   local e = current()
   if not e then return end
+  if #selected() > 1 then
+    frm.lblStatus.caption = "  Rename works on one item at a time"
+    return
+  end
   local name = gui.inputbox(("New name for %s:"):format(e.name), "Rename", e.name)
   if not name or name == e.name then return end
   local to, err = fs.rename(e.path, name)
@@ -200,22 +241,127 @@ local function rename()
 end
 
 local function delete()
-  local e = current()
-  if not e then return end
+  local list = selected()
+  if #list == 0 then return end
   if settings.confirmDelete then
-    local n = e.dir and fs.count(e.path) - 1 or 0
-    local what = n > 0 and (" and the %d %s in it"):format(n, n == 1 and "thing" or "things") or ""
-    if gui.msgbox(("Delete %s%s?\n\nThis cannot be undone."):format(e.name, what), "yesno", "Delete") ~= "yes" then
+    local question
+    if #list == 1 then
+      local e = list[1]
+      local n = e.dir and fs.count(e.path) - 1 or 0
+      local what = n > 0 and (" and the %d %s in it"):format(n, n == 1 and "thing" or "things") or ""
+      question = ("Delete %s%s?"):format(e.name, what)
+    else
+      local n = 0
+      for _, e in ipairs(list) do n = n + fs.count(e.path) end
+      question = ("Delete these %d items, with the %d %s in all?"):format(#list, n, n == 1 and "thing" or "things")
+    end
+    if gui.msgbox(question .. "\n\nThis cannot be undone.", "yesno", "Delete") ~= "yes" then
       return
     end
   end
   local at = frm.lstFiles.current
-  local ok, err = fs.remove(e.path)
-  if not ok then
-    gui.msgbox(("Cannot delete %s.\n\n%s"):format(e.name, tostring(err)), "ok", "Delete")
+  local errors = {}
+  for _, e in ipairs(list) do
+    local ok, err = fs.remove(e.path)
+    if not ok then errors[#errors + 1] = ("%s: %s"):format(e.name, tostring(err)) end
+  end
+  if #errors > 0 then
+    gui.msgbox(("Cannot delete everything.\n\n%s"):format(table.concat(errors, "\n")), "ok", "Delete")
   end
   show()
   frm.lstFiles:pick(math.min(at, #entries))
+end
+
+---------------------------------------------------------------- cut, copy and paste
+
+local function things(n) return n == 1 and "1 item" or n .. " items" end
+
+-- updateEdit enables what the Edit menu can do now: cut and copy when
+-- something is selected, paste when something was cut or copied.
+function updateEdit()
+  local any = #entries > 0
+  setMenuItem("mnuCut", "enabled", any)
+  setMenuItem("mnuCopy", "enabled", any)
+  setMenuItem("mnuPaste", "enabled", clip ~= nil and pasting == nil)
+end
+
+-- setClip keeps what is selected to paste: cut, which moves it, or copied.
+local function setClip(cut)
+  local list = selected()
+  if #list == 0 then return end
+  clip = { paths = {}, cut = cut }
+  for _, e in ipairs(list) do clip.paths[#clip.paths + 1] = e.path end
+  frm.lblStatus.caption = ("  %s %s%s"):format(cut and "Cut" or "Copied", things(#list),
+    cut and ": Paste moves " .. (#list == 1 and "it" or "them") .. " into a folder" or "")
+  updateEdit()
+end
+
+-- finishPaste is what is done when a paste has run its course: the folder is
+-- read again with what was pasted selected, and what happened is said.
+local function finishPaste(job, where)
+  local at = pasting
+  pasting = nil
+  if at and at.timer then at.timer:stop() end
+  if where == dir then
+    show()
+    local names = {}
+    for _, path in ipairs(job.results) do names[#names + 1] = fs.basename(path) end
+    if #names > 0 then frm.lstFiles:selectNames(names) end
+  end
+  local said
+  if job.cancelled then
+    said = ("Stopped: %s %s of %s"):format(job.move and "moved" or "copied", things(job.count), things(#job.items))
+  else
+    said = ("%s %s"):format(job.move and "Moved" or "Pasted", things(job.count))
+    if job.skipped > 0 then
+      said = said .. (", %d %s there already"):format(job.skipped, job.skipped == 1 and "was" or "were")
+    end
+  end
+  frm.lblStatus.caption = "  " .. said
+  if job.move and #job.errors == 0 and not job.cancelled then clip = nil end
+  updateEdit()
+  if #job.errors > 0 then
+    gui.msgbox(("%s\n\n%s"):format(said, table.concat(job.errors, "\n")), "ok", "Paste")
+  end
+end
+
+-- paste copies or moves what was cut or copied into the folder shown, a
+-- piece at a time from a timer, so the window never waits and Escape can
+-- stop it.
+local function paste()
+  if not clip or pasting then return end
+  local where = dir
+  local job = fs.paste(clip.paths, where, clip.cut)
+  job.move = clip.cut
+  if job.finished then
+    finishPaste(job, where)
+    return
+  end
+  pasting = { job = job }
+  updateEdit()
+  local function progress()
+    local pct = job.total > 0 and math.floor(100 * job.bytes / job.total) or 100
+    frm.lblStatus.caption = ("  %s %d of %d: %s (%d%%)  Escape stops it"):format(job.move and "Moving" or "Copying",
+      math.min(job.count + 1, #job.items), #job.items, job.current or "", pct)
+  end
+  progress()
+  -- tick is what the timer calls (and the tests): a step of the job.
+  pasting.tick = function()
+    if job:step() then
+      finishPaste(job, where)
+      return false
+    end
+    progress()
+    return true
+  end
+  pasting.timer = gui.every(0.02, pasting.tick)
+end
+
+-- stopPaste stops a paste that is going on, what is done staying done.
+local function stopPaste()
+  if not pasting then return false end
+  pasting.job:cancel()
+  return true
 end
 
 ---------------------------------------------------------------- settings
@@ -378,6 +524,7 @@ local function folderItems()
   end
   local items = {
     { "New &Folder...", name = "newFolder", newFolder },
+    { "&Paste", name = "paste", paste, enabled = clip ~= nil and pasting == nil },
     "-",
     { "Show &Hidden Files", name = "hidden", checked = settings.showHidden,
       function(_, on) applySettings { showHidden = on } end },
@@ -418,9 +565,24 @@ local function menuFor(i)
   else
     add { "&Open", name = "open", function() open(e) end, shortcut = "Enter" }
     if ext == "lua" then add { "Run with &tlua", name = "run", function() run(e.path) end } end
+    -- The apps of ours that open it, and the system's program.
+    local with = {}
+    for _, name in ipairs(openwith.available(e.path)) do
+      with[#with + 1] = { "&" .. (openwith.TITLES[name] or name), name = "with-" .. name,
+        function() openWithApp(name, e.path) end }
+    end
+    if #with > 0 then
+      with[#with + 1] = "-"
+      with[#with + 1] = { "&System Default", name = "with-system", function() openWithSystem(e.path) end }
+      add { "Open &With", with }
+    end
   end
   add "-"
-  add { "Re&name...", name = "rename", rename, shortcut = "F2" }
+  add { "Cu&t", name = "cut", function() setClip(true) end }
+  add { "&Copy", name = "copy", function() setClip(false) end }
+  add { "&Paste", name = "paste", paste, enabled = clip ~= nil and pasting == nil and e.dir == true and ext ~= "app" }
+  add "-"
+  add { "Re&name...", name = "rename", rename, shortcut = "F2", enabled = #selected() == 1 }
   add { "&Delete...", name = "delete", delete, shortcut = "Delete" }
   add "-"
   add { "Copy &Path", name = "copyPath", function() gui.clipboard(e.path) end }
@@ -450,6 +612,7 @@ end
 
 -- Keys the list has no use for of its own.
 function frm.lstFiles:onCommand(key)
+  if key == "Escape" and stopPaste() then return true end
   if key == "Backspace" then goUp() return true end
   if key == "Delete" then delete() return true end
   return false
@@ -483,7 +646,10 @@ function frm.cmdHome:onClick() go(fs.home()) end
 -- the path, and Escape does not close the window.
 function frm:onKey(key)
   if key == "Backspace" then goUp() return true end
-  if key == "Escape" then frm.lstFiles:focus() return true end
+  if key == "Escape" then
+    if not stopPaste() then frm.lstFiles:focus() end
+    return true
+  end
   return false
 end
 
@@ -500,10 +666,16 @@ end
 local help = [[In the list:
   Up, Down, Page Up, Page Down, Home, End    move
   Enter or double-click    open: a folder, a .ztl app (runs it
-                           with tlua), or a file in its own program
+                           with tlua), or a file in one of turboapps'
+                           apps (a picture in the image viewer) or the
+                           system's program; Open With in the menu picks
   Backspace                the folder this one is in
   Delete                   delete
   F2                       rename
+  Shift+Up, Shift+Down, Shift+click   select several; Cmd+click adds
+                           or takes one out; Cmd+A selects all
+  Cmd+X, Cmd+C, Cmd+V      cut, copy and paste files and folders
+                           (a cut one is moved); Escape stops a paste
   Shift+F10 or right-click a menu of what can be done to it
   typing a name            goes to it
 
@@ -528,6 +700,10 @@ local actions = {
   mnuNewFolder = newFolder,
   mnuRename = rename,
   mnuDelete = delete,
+  mnuCut = function() setClip(true) end,
+  mnuCopy = function() setClip(false) end,
+  mnuPaste = paste,
+  mnuSelectAll = function() frm.lstFiles:selectAll() end,
   mnuCopyPath = function()
     local e = current()
     gui.clipboard(e and e.path or dir)
@@ -580,6 +756,10 @@ gui.after(0, function() frm.lstFiles:focus() end)
 
 -- Exposed for the tests.
 frm.menuFor = menuFor
+frm.selected = selected
+frm.paste, frm.setClip, frm.stopPaste = paste, setClip, stopPaste
+frm.clipboard = function() return clip end
+frm.pasting = function() return pasting end
 frm.state = function()
   return { dir = dir, entries = entries, settings = settings, history = history }
 end

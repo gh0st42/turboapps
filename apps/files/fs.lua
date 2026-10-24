@@ -256,6 +256,224 @@ function M.remove(path)
   return os.remove(path)
 end
 
+---------------------------------------------------------------- copying and moving
+
+-- uniqueName is a name for a copy of name in dir that is not taken: the
+-- name itself when it is free, else "a copy.txt", "a copy 2.txt", and so on
+-- (the end of a folder's name is not an extension).
+function M.uniqueName(dir, name, isDir)
+  local function taken(n)
+    local path = M.join(dir, n)
+    return M.exists(path) or lfs.symlinkattributes(path) ~= nil
+  end
+  if not taken(name) then return name end
+  local base, ext = name, ""
+  if not isDir then
+    local b, e = name:match("^(.+)(%.[^.]+)$")
+    if b then base, ext = b, e end
+  end
+  local n = 1
+  while true do
+    local candidate = base .. " copy" .. (n > 1 and (" " .. n) or "") .. ext
+    if not taken(candidate) then return candidate end
+    n = n + 1
+  end
+end
+
+-- size is how many bytes a file, or a folder and all in it, takes; links
+-- are not followed.
+function M.size(path)
+  local mode = lfs.symlinkattributes(path, "mode")
+  if mode == "directory" then
+    local n = 0
+    for name in lfs.dir(path) do
+      if name ~= "." and name ~= ".." then n = n + M.size(M.join(path, name)) end
+    end
+    return n
+  end
+  return mode == "file" and lfs.attributes(path, "size") or 0
+end
+
+-- within says whether path is dir or something in it.
+local function within(path, dir)
+  path, dir = M.normalize(path), M.normalize(dir)
+  return path == dir or path:sub(1, #dir + 1) == dir:gsub("/$", "") .. "/"
+end
+
+local CHUNK = 1024 * 1024
+
+-- quote makes text one word for the shell.
+local function quote(s) return "'" .. s:gsub("'", "'\\''") .. "'" end
+
+-- copyMode gives a copy the permissions of what it is a copy of, which a
+-- program that copies only the bytes loses (an executable stops being
+-- one). Only the owner's, group's and others' bits, and only where there is
+-- a shell and anything beyond the usual to give.
+local function copyMode(from, to)
+  if M.windows then return end
+  local perms = lfs.attributes(from, "permissions")
+  if not perms or not perms:find("x") then return end
+  local mode = 0
+  for i = 1, 9 do
+    if perms:sub(i, i) ~= "-" then mode = mode + 2 ^ (9 - i) end
+  end
+  os.execute(("chmod %o %s"):format(mode, quote(to)))
+end
+
+local Job = {}
+Job.__index = Job
+
+-- copyFile copies a file a chunk at a time, giving the program back (the
+-- job is a coroutine) when the chunks have used up what a step was given.
+local function copyFile(job, from, to)
+  local rf, err = io.open(from, "rb")
+  if not rf then return nil, err end
+  local wf, werr = io.open(to, "wb")
+  if not wf then rf:close() return nil, werr end
+  local function give_up(why)
+    rf:close(); wf:close()
+    os.remove(to)
+    return nil, why
+  end
+  while true do
+    if job.cancelled then return give_up("cancelled") end
+    local chunk = rf:read(math.min(CHUNK, job.budget))
+    if not chunk then break end
+    local ok, e = wf:write(chunk)
+    if not ok then return give_up(e) end
+    job.bytes = job.bytes + #chunk
+    job.spent = job.spent + #chunk
+    if job.spent >= job.budget then
+      job.spent = 0
+      coroutine.yield()
+    end
+  end
+  rf:close(); wf:close()
+  local a = lfs.attributes(from)
+  if a then lfs.touch(to, a.access, a.modification) end
+  copyMode(from, to)
+  return true
+end
+
+-- copyTree copies a file, a link or a folder with all in it. What cannot be
+-- copied is noted in job.errors and the rest goes on; it says whether it
+-- all went.
+local function copyTree(job, from, to)
+  local mode = lfs.symlinkattributes(from, "mode")
+  job.current = M.basename(from)
+  if mode == "link" then
+    local ok, err = lfs.link(lfs.symlinkattributes(from, "target"), to, true)
+    if not ok then job.errors[#job.errors + 1] = M.basename(from) .. ": " .. tostring(err) end
+    return ok
+  elseif mode == "directory" then
+    local ok, err = lfs.mkdir(to)
+    if not ok then
+      job.errors[#job.errors + 1] = M.basename(from) .. ": " .. tostring(err)
+      return false
+    end
+    local names = {}
+    for name in lfs.dir(from) do
+      if name ~= "." and name ~= ".." then names[#names + 1] = name end
+    end
+    table.sort(names)
+    local all = true
+    for _, name in ipairs(names) do
+      if job.cancelled then return false end
+      all = copyTree(job, M.join(from, name), M.join(to, name)) and all
+    end
+    return all
+  end
+  local ok, err = copyFile(job, from, to)
+  if not ok and err ~= "cancelled" then job.errors[#job.errors + 1] = M.basename(from) .. ": " .. tostring(err) end
+  return ok
+end
+
+local function runJob(job)
+  for _, item in ipairs(job.items) do
+    if job.cancelled then break end
+    job.current = item.name
+    local done = false
+    -- A move on the same disk is a rename; across disks it is a copy, then
+    -- the original taken away.
+    if item.move and os.rename(item.from, item.to) then
+      job.bytes = job.bytes + item.size
+      done = true
+    else
+      done = copyTree(job, item.from, item.to)
+      if done and item.move then
+        local ok, err = M.remove(item.from)
+        if not ok then
+          job.errors[#job.errors + 1] = item.name .. ": copied, but not taken from where it was: " .. tostring(err)
+          done = false
+        end
+      end
+    end
+    if done then
+      job.count = job.count + 1
+      job.results[#job.results + 1] = item.to
+    end
+  end
+  job.finished = true
+end
+
+-- paste makes a job of copying paths into the folder dest, or of moving
+-- them there when move is true. An item that is there already is given
+-- a name that is not taken ("a copy.txt"); a folder cannot go into itself,
+-- and a move to the folder it is in is nothing to do. The job is run with
+-- job:step(), which does some of it and says whether it is all done, and
+-- can be stopped with job:cancel():
+--
+--   job.total, job.bytes     how much there is to do, and how much is done
+--   job.current              the name of what it is at
+--   job.count, job.results   how many of the paths are in, and where
+--   job.errors               what went wrong, as text, a line each
+--   job.skipped              how many a move left alone, being there already
+function M.paste(paths, dest, move)
+  dest = M.normalize(dest)
+  local job = setmetatable({ items = {}, total = 0, bytes = 0, count = 0, results = {}, errors = {},
+    skipped = 0, spent = 0, budget = CHUNK, finished = false }, Job)
+  for _, path in ipairs(paths) do
+    path = M.normalize(path)
+    local name = M.basename(path)
+    local mode = lfs.symlinkattributes(path, "mode")
+    if not mode then
+      job.errors[#job.errors + 1] = name .. ": it is not there any more"
+    elseif mode == "directory" and within(dest, path) then
+      job.errors[#job.errors + 1] = name .. ": a folder cannot go into itself"
+    elseif move and M.parent(path) == dest then
+      job.skipped = job.skipped + 1
+    else
+      local size = M.size(path)
+      job.total = job.total + size
+      job.items[#job.items + 1] = {
+        from = path, to = M.join(dest, M.uniqueName(dest, name, mode == "directory")),
+        name = name, move = move, size = size,
+      }
+    end
+  end
+  job.co = coroutine.create(function() runJob(job) end)
+  if #job.items == 0 then job.finished = true end
+  return job
+end
+
+-- step does some of the job: up to budget bytes (4 MB without one). It says
+-- whether the job is finished.
+function Job:step(budget)
+  if self.finished then return true end
+  self.budget, self.spent = budget or 4 * CHUNK, 0
+  local ok, err = coroutine.resume(self.co)
+  if not ok then
+    self.errors[#self.errors + 1] = tostring(err)
+    self.finished = true
+  end
+  return self.finished
+end
+
+-- cancel stops it at the next chunk; what was copied already stays.
+function Job:cancel()
+  self.cancelled = true
+end
+
 ---------------------------------------------------------------- places
 
 -- places are the folders listed on the left: home and the usual ones in
@@ -369,6 +587,7 @@ M.defaults = {
   sortBy = "name",
   descending = false,
   confirmDelete = true,
+  openWithApps = true,
 }
 
 -- settingsFile, when set, is where the settings are kept instead; the

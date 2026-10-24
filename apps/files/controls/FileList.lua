@@ -9,8 +9,14 @@
 --
 --   list:setRows(rows)   rows of { name =, cells = { ... }, icon = "dir"|"app"|"file" }
 --   list:pick(i)         selects row i and scrolls to it
---   list:selectedRow()   the selected row's table, or nil
---   list.current         the selected row, 0 for none
+--   list:selectedRow()   the row with the focus (the one last picked), or nil
+--   list:selectedRows()  every row selected, in order; the focused one when only one is
+--   list:selectNames(names)  selects the rows with these names
+--   list.current         the row with the focus, 0 for none
+--
+-- Several rows can be selected: Shift and a click or the arrows extends the
+-- selection from where it began, Cmd (Ctrl) and a click adds a row or takes
+-- it out, and Cmd (Ctrl) A takes them all.
 --
 -- Events: onChange(i) when the selection moves, onOpen(i) on a double
 -- click or Enter, onSort(column) on a click on a column's title, onMenu(i)
@@ -74,6 +80,8 @@ gui.define {
       { title = "Kind", width = 110 },
     }
     c.current = 0
+    c.selection = {}   -- the rows selected, { [i] = true }; the current one is always among them
+    c.anchor = 0       -- where a Shift selection began
     c.first = 1
     c.sortColumn, c.descending = 1, false
     c.typed, c.typedTimer = "", nil
@@ -90,18 +98,67 @@ gui.define {
       self.first = clamp(self.first, 1, #self.entries - vis + 1)
     end
 
-    function c:pick(i, quiet)
+    -- pick makes row i the one with the focus, and the only one selected;
+    -- with extend, the rows from where the selection began to it are.
+    function c:pick(i, quiet, extend)
       i = clamp(i, #self.entries > 0 and 1 or 0, #self.entries)
       local moved = i ~= self.current
+      local before = self:selectionKey()
       self.current = i
+      if extend and self.anchor > 0 and i > 0 then
+        self.selection = {}
+        for k = math.min(self.anchor, i), math.max(self.anchor, i) do self.selection[k] = true end
+      else
+        self.selection = i > 0 and { [i] = true } or {}
+        self.anchor = i
+      end
       if i > 0 then self:reveal(i) end
       self:redraw()
-      if moved and not quiet then self:fire("onChange", i) end
+      if (moved or before ~= self:selectionKey()) and not quiet then self:fire("onChange", i) end
     end
 
-    -- setRows shows new rows, keeping the row of the same name selected
-    -- when there is one, else the first.
+    -- selectionKey is what is selected, as a string, to see if it changed.
+    function c:selectionKey()
+      local keys = {}
+      for i in pairs(self.selection) do keys[#keys + 1] = i end
+      table.sort(keys)
+      return table.concat(keys, ",")
+    end
+
+    -- toggle adds row i to the selection, or takes it out (never the last).
+    function c:toggle(i)
+      if i < 1 or i > #self.entries then return end
+      local count = 0
+      for _ in pairs(self.selection) do count = count + 1 end
+      if self.selection[i] and count > 1 then
+        self.selection[i] = nil
+        if self.current == i then self.current = next(self.selection) end
+      else
+        self.selection[i] = true
+        self.current = i
+      end
+      self.anchor = self.current
+      self:reveal(self.current)
+      self:redraw()
+      self:fire("onChange", self.current)
+    end
+
+    function c:selectAll()
+      if #self.entries == 0 then return end
+      self.selection = {}
+      for i = 1, #self.entries do self.selection[i] = true end
+      self.anchor = 1
+      self:redraw()
+      self:fire("onChange", self.current)
+    end
+
+    -- setRows shows new rows, keeping the rows of the same names selected
+    -- when there are some, else the first.
     function c:setRows(rows, selectName)
+      local names = {}
+      for i in pairs(self.selection) do
+        if self.entries[i] then names[self.entries[i].name] = true end
+      end
       local was = selectName or (self.entries[self.current] or {}).name
       self.entries = rows
       self.first = 1
@@ -111,11 +168,46 @@ gui.define {
         if r.name == was then at = i break end
       end
       self:pick(at, true)
+      if not selectName then
+        for i, r in ipairs(rows) do
+          if names[r.name] then self.selection[i] = true end
+        end
+      end
+      self:fire("onChange", self.current)
+    end
+
+    -- selectNames selects the rows with these names (a list), the first of
+    -- them having the focus.
+    function c:selectNames(list)
+      local want = {}
+      for _, n in ipairs(list) do want[n] = true end
+      local first
+      self.selection = {}
+      for i, r in ipairs(self.entries) do
+        if want[r.name] then
+          self.selection[i] = true
+          first = first or i
+        end
+      end
+      if first then
+        self.current, self.anchor = first, first
+        self:reveal(first)
+      end
+      self:redraw()
       self:fire("onChange", self.current)
     end
 
     function c:selectedRow()
       return self.entries[self.current]
+    end
+
+    function c:selectedRows()
+      local out = {}
+      for i, r in ipairs(self.entries) do
+        if self.selection[i] then out[#out + 1] = r end
+      end
+      if #out == 0 and self.entries[self.current] then out[1] = self.entries[self.current] end
+      return out
     end
 
     -- The x and width of each column: the first takes what the others
@@ -164,8 +256,8 @@ gui.define {
       for i = self.first, math.min(#self.entries, self.first + vis - 1) do
         local r = self.entries[i]
         local y = HEAD + (i - self.first) * ROW
-        local sel = i == self.current
-        if sel then g:color("#2f6fd8"); g:fill(0, y, inner, ROW)
+        local sel = self.selection[i]
+        if sel then g:color(i == self.current and "#2f6fd8" or "#5a8be0"); g:fill(0, y, inner, ROW)
         elseif i % 2 == 0 then g:color("#f4f6fa"); g:fill(0, y, inner, ROW) end
         icon(g, r.icon, 6, y + 3)
         g:color(sel and "#ffffff" or (r.dim and "#8a8a8a" or "#202020"))
@@ -206,7 +298,9 @@ gui.define {
         if y < HEAD then return end
         local i = self.first + math.floor((y - HEAD) / ROW)
         if i > #self.entries then i = 0 end
-        if i > 0 then self:pick(i) end
+        -- A row in the selection keeps it, for a menu about all of it.
+        if i > 0 and not self.selection[i] then self:pick(i) end
+        if i > 0 then self.current = i end
         self:fire("onMenu", i)
         return
       end
@@ -224,8 +318,15 @@ gui.define {
       end
       local i = self.first + math.floor((y - HEAD) / ROW)
       if i > #self.entries then return end
-      self:pick(i)
-      if double and button == 1 then self:fire("onOpen", i) end
+      mods = mods or ""
+      if mods:find("Shift") then
+        self:pick(i, false, true)
+      elseif mods:find("Cmd") or (gui.platform ~= "darwin" and mods:find("Ctrl")) then
+        self:toggle(i)
+      else
+        self:pick(i)
+        if double and button == 1 then self:fire("onOpen", i) end
+      end
     end
 
     function c:onMouseDrag(x, y)
@@ -254,7 +355,12 @@ gui.define {
       end
       local base = key:gsub("^Shift%+", "")
       if moves[base] then
-        self:pick(moves[base](self))
+        self:pick(moves[base](self), false, key:find("^Shift%+") ~= nil)
+        return true
+      end
+      local letter = key:match("^Cmd%+(.+)$") or key:match("^Ctrl%+(.+)$")
+      if letter and letter:lower() == "a" then
+        self:selectAll()
         return true
       end
       if key == "Enter" or text == "\r" then

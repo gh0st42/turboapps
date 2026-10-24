@@ -3,6 +3,7 @@
 
 local gui = require "gui"
 local catalog = require "catalog"
+local openwith = require "openwith"
 local frm = gui.load "Desktop" --[[@as forms.Desktop]]
 
 local root = catalog.findRoot()
@@ -94,6 +95,44 @@ local function spawnApp(app, mode)
   end
 
   setStatus(("%s gestartet: %s"):format(label, app.name))
+end
+
+-- openFile asks for a file and opens it in the app of ours for it: a picture
+-- in the image viewer, a spreadsheet in MicroSheets, and so on. The one to
+-- use is the first there is; when several would do, the menu of Files'
+-- Open With is the way to pick another.
+local function openFile(path)
+  path = path or gui.openfile { title = "Open File" }
+  if not path then return end
+  local name = openwith.available(path, { env = root, arg0 = (arg or {})[0] })[1]
+  if not name then
+    gui.msgbox(("There is no app here for %s."):format(catalog.basename(path)), "ok", "Turbo Desktop")
+    return
+  end
+  local cmd = openwith.command(name, path, gui.interpreter, { env = root, arg0 = (arg or {})[0] })
+  local errors = {}
+  local task = {
+    dir = root,
+    onOutput = function(line, stream)
+      if stream == "stderr" then
+        errors[#errors + 1] = line
+        if #errors > 12 then table.remove(errors, 1) end
+      end
+    end,
+    onExit = function(code)
+      if code ~= 0 then
+        gui.msgbox(("%s stopped with an error (%d).\n\n%s"):format(openwith.TITLES[name] or name, code,
+          table.concat(errors, "\n")), "ok", "Turbo Desktop")
+      end
+    end,
+  }
+  for i, part in ipairs(cmd) do task[i] = part end
+  local ok, err = pcall(gui.spawn, task)
+  if not ok then
+    showSpawnError(("Cannot start %s."):format(openwith.TITLES[name] or name), err)
+    return
+  end
+  setStatus(("Opened %s in %s"):format(catalog.basename(path), openwith.TITLES[name] or name))
 end
 
 local function showCategoryApps(name)
@@ -226,6 +265,7 @@ frm.Menu1.onClick = function(_, name)
     mnuLaunch = function() spawnApp(current(), "gui") end,
     mnuDesign = function() spawnApp(current(), "design") end,
     mnuRefresh = refresh,
+    mnuOpenFile = function() openFile() end,
     mnuSetCategory = setCategoryForCurrent,
     mnuNewCategory = newCategory,
     mnuSaveCategories = saveCategories,
@@ -244,5 +284,8 @@ frm.Menu1.onClick = function(_, name)
 end
 
 refresh()
+
+-- Exposed for the tests.
+frm.openFile = openFile
 
 return frm
