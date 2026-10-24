@@ -174,7 +174,11 @@ what it is and how it is used. UI text is plain English, without jargon.
   (tlua 0.8.1), a timer per frame; Space stops and starts them. The whole
   window is dark through `gui.colors` (tlua 0.8.2: FLTK's global colours,
   which a ListBox's text, scrollbars and dialogs follow; a ListBox's own
-  `textColor` does nothing). It has no menu; Cmd (Ctrl) O, Cmd Up and
+  `textColor` does nothing). Zoom and panning are arithmetic in view.lua
+  (tested alone) and draw only the part that shows; Enter shows the picture
+  on cnvFull, a second canvas over everything, with the window's
+  `fullscreen` (tlua 0.8.3), the list and the status line put away. The
+  last folder and the list's width are kept in settings.lua. It has no menu; Cmd (Ctrl) O, Cmd Up and
   F1 are keys of the form's. A ListBox keeps Up and Down for
   itself and takes Home, End, Page Up, Page Down and the letters for
   nothing useful, so the form's `onKeyPreview` does those, with Enter,

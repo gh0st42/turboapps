@@ -4,7 +4,13 @@ local t = require "testing"
 local lfs = require "lfs"
 local png = require "png" -- tlua's own module
 local folder = require "folder"
+local viewmod = require "view"
+local settings = require "settings"
 local test, eq, ok = t.test, t.eq, t.ok
+
+-- The viewer's settings are a file of the tests' own, never the user's.
+local settingsFile = os.tmpname()
+settings.file = settingsFile
 
 -- A folder of the tests' own: folders a, b and Misc, pictures of two sizes
 -- (one named for a JPEG, to show the extension is read in any case), a file
@@ -64,6 +70,74 @@ test("paths", function()
   eq(folder.parent("C:/a"), "C:/"); eq(folder.parent("C:\\a\\b"), "C:/a")
   eq(folder.basename("/a/b/"), "b"); eq(folder.join("/a", "b"), "/a/b"); eq(folder.join("/", "b"), "/b")
   eq(folder.formatSize(12), "12 B"); eq(folder.formatSize(1536), "1.5 KB"); eq(folder.formatSize(5 * 1024 * 1024), "5.0 MB")
+end)
+
+---------------------------------------------------------------- the view
+
+test("view: a picture fits the window, in the middle", function()
+  local v = viewmod.new()
+  local x, y, w, h = viewmod.place(v, 40, 20, 200, 100)
+  eq(w, 200); eq(h, 100); eq(x, 0); eq(y, 0)
+  x, y, w, h = viewmod.place(v, 40, 20, 200, 200)
+  eq(w, 200); eq(h, 100); eq(x, 0); eq(y, 50, "taller than wide: black above and below")
+  x, y, w, h = viewmod.place(v, 20, 40, 200, 100)
+  eq(h, 100); eq(w, 50); eq(x, 75); eq(y, 0)
+  eq(viewmod.percent(v, 40, 20, 200, 100), 500)
+  ok(not viewmod.movable(v, 40, 20, 200, 100))
+end)
+
+test("view: zoom, actual size, and moving about", function()
+  local v = viewmod.new()
+  viewmod.actual(v, 400, 300, 200, 100)
+  eq(v.mode, "zoom"); eq(viewmod.percent(v, 400, 300, 200, 100), 100)
+  local x, y, w, h = viewmod.place(v, 400, 300, 200, 100)
+  eq(w, 400); eq(h, 300); eq(x, -100); eq(y, -100, "the middle of the picture in the middle of the window")
+  ok(viewmod.movable(v, 400, 300, 200, 100))
+  -- Moving the picture 30 right shows more of its left.
+  viewmod.pan(v, 30, 0, 400, 300, 200, 100)
+  x = viewmod.place(v, 400, 300, 200, 100)
+  eq(x, -70)
+  -- It stops where its edge meets the window's.
+  viewmod.pan(v, 5000, 5000, 400, 300, 200, 100)
+  x, y = viewmod.place(v, 400, 300, 200, 100)
+  eq(x, 0); eq(y, 0)
+  viewmod.pan(v, -5000, -5000, 400, 300, 200, 100)
+  x, y = viewmod.place(v, 400, 300, 200, 100)
+  eq(x, -200); eq(y, -200)
+  -- Zooming keeps the point under the mouse where it is.
+  v = viewmod.new()
+  viewmod.actual(v, 400, 300, 200, 100)
+  local before = (50 - select(1, viewmod.place(v, 400, 300, 200, 100))) / 400
+  viewmod.zoomBy(v, 2, 400, 300, 200, 100, 50, 20)
+  x = viewmod.place(v, 400, 300, 200, 100)
+  ok(math.abs((50 - x) / 800 - before) < 0.01, "the same part of the picture is at the mouse")
+  eq(viewmod.percent(v, 400, 300, 200, 100), 200)
+  -- Smaller than the window, it is in the middle again, and cannot be moved.
+  viewmod.setZoom(v, 0.25, 400, 300, 200, 100)
+  x, y, w, h = viewmod.place(v, 400, 300, 200, 100)
+  eq(w, 100); eq(h, 75); eq(x, 50); eq(y, 12)
+  ok(not viewmod.movable(v, 400, 300, 200, 100))
+  viewmod.setZoom(v, 1000, 400, 300, 200, 100)
+  eq(v.zoom, viewmod.MAX, "not past a limit")
+  viewmod.fit(v)
+  eq(viewmod.percent(v, 400, 300, 200, 100), 33, "100 high of 300")
+  viewmod.pan(v, 10, 10, 400, 300, 200, 100)
+  eq(v.mode, "fit", "a fitted picture does not move")
+end)
+
+test("settings: kept in a file, read back with nothing in its environment", function()
+  local file = os.tmpname()
+  settings.file = file
+  local s = settings.load()
+  eq(s.last, ""); eq(s.split, 0)
+  ok(settings.save { last = "/a/b \"c\"", split = 321 })
+  s = settings.load()
+  eq(s.last, '/a/b "c"'); eq(s.split, 321)
+  local f = io.open(file, "w"); f:write("os.execute('exit 1') return { last = 5, split = 'x' }"); f:close()
+  s = settings.load()
+  eq(s.last, ""); eq(s.split, 0, "a file that is not what it should be is ignored")
+  os.remove(file)
+  settings.file = settingsFile
 end)
 
 ---------------------------------------------------------------- the form
@@ -170,7 +244,6 @@ test("form: Enter and Right open a folder, Backspace and Left go up", function()
   -- The keys the list has for itself are left to it.
   list.selected = 5
   ok(not frm:fire("onKeyPreview", "Down", ""))
-  ok(not frm:fire("onKeyPreview", "Enter", ""), "Enter on a picture does nothing")
   eq(frm.folder(), root)
 end)
 
@@ -253,6 +326,166 @@ test("form: a splitter between the list and the picture", function()
   eq(frm.cnvImage.parent, frm.splMain)
   ok(not frm.Menu1, "no menu")
   eq(frm.lstFiles.left + frm.lstFiles.width, frm.cnvImage.left, "side by side, edge to edge")
+end)
+
+---------------------------------------------------------------- zoom and the whole screen
+
+-- pixelOf is the colour at x, y of whichever canvas is up, as it draws.
+local function pixelOf(c, x, y)
+  local r, g, b = c:snapshot():get(x, y)
+  return r, g, b
+end
+
+test("form: zoom, actual size and fit", function()
+  frm.open(root)
+  list.selected = 6 -- img10: 40 x 20, red
+  frm.lstFiles:fire("onChange")
+  frm.flush()
+  eq(frm.view().mode, "fit")
+  ok(frm.lblStatus.caption:find("fit 1700%", 1, true), frm.lblStatus.caption)
+  eq(frm:fire("onKeyPreview", "Cmd+1", "1"), true)
+  eq(frm.view().mode, "zoom"); eq(frm.view().zoom, 1)
+  ok(frm.lblStatus.caption:find("100%", 1, true) and not frm.lblStatus.caption:find("fit", 1, true), frm.lblStatus.caption)
+  local w, h = canvas.width, canvas.height
+  local r = pixelOf(canvas, math.floor(w / 2), math.floor(h / 2))
+  ok(r > 200, "40 pixels, red, in the middle")
+  r = pixelOf(canvas, math.floor(w / 2) + 60, math.floor(h / 2))
+  eq(r, 0, "and black around it")
+  eq(frm:fire("onKeyPreview", "Cmd+=", "="), true)
+  eq(frm.view().zoom, 1.25)
+  eq(frm:fire("onKeyPreview", "Ctrl+-", "-"), true)
+  eq(frm.view().zoom, 1)
+  eq(frm:fire("onKeyPreview", "Cmd+0", "0"), true)
+  eq(frm.view().mode, "fit")
+  -- Bigger than the window: only what shows is drawn, and it is the middle.
+  frm:fire("onKeyPreview", "Cmd+1", "1")
+  for _ = 1, 18 do frm:fire("onKeyPreview", "Cmd+=", "=") end
+  ok(frm.view().zoom > 50)
+  r = pixelOf(canvas, math.floor(w / 2), math.floor(h / 2))
+  ok(r > 200, "still red in the middle")
+  ok(frm.cnvImage.pointer == "hand", "a hand over a picture that moves")
+  -- The wheel zooms, a double click goes to actual size and back.
+  frm:fire("onKeyPreview", "Cmd+1", "1")
+  for _ = 1, 10 do frm:fire("onKeyPreview", "Cmd+=", "=") end
+  frm.cnvImage:fire("onMouseMove", 100, 100)
+  local z = frm.view().zoom
+  frm.cnvImage:fire("onMouseWheel", 0, -1)
+  eq(frm.view().zoom, z * 1.25)
+  frm.cnvImage:fire("onMouseWheel", 0, 1)
+  eq(frm.view().zoom, z)
+  frm.cnvImage:fire("onDoubleClick", 50, 50)
+  eq(frm.view().mode, "fit")
+  frm.cnvImage:fire("onDoubleClick", math.floor(w / 2), math.floor(h / 2))
+  eq(frm.view().mode, "zoom"); eq(frm.view().zoom, 1)
+  ok(frm.cnvImage.pointer == "default", "nothing to move at 100% of a small picture")
+  -- Another picture starts fitted again.
+  list.selected = 5
+  frm.lstFiles:fire("onChange")
+  frm.flush()
+  eq(frm.view().mode, "fit")
+end)
+
+test("form: a picture bigger than the window is moved by dragging and Shift and the arrows", function()
+  list.selected = 6
+  frm.lstFiles:fire("onChange")
+  frm.flush()
+  frm:fire("onKeyPreview", "Cmd+1", "1")
+  for _ = 1, 18 do frm:fire("onKeyPreview", "Cmd+=", "=") end
+  local cx = frm.view().cx
+  frm.cnvImage:fire("onMouseDown", 200, 200, 1, false, "")
+  frm.cnvImage:fire("onMouseDrag", 150, 200)
+  ok(frm.view().cx > cx, "dragging left shows more of the right")
+  frm.cnvImage:fire("onMouseUp", 150, 200, 1)
+  cx = frm.view().cx
+  eq(frm:fire("onKeyPreview", "Shift+Right", ""), true)
+  ok(frm.view().cx > cx, "Shift and Right shows more of the right")
+  cx = frm.view().cx
+  eq(frm:fire("onKeyPreview", "Shift+Left", ""), true)
+  ok(frm.view().cx < cx)
+  local cy = frm.view().cy
+  frm:fire("onKeyPreview", "Shift+Down", "")
+  ok(frm.view().cy > cy)
+  canvas:snapshot()
+  -- Without a picture bigger than the window it moves nothing, and says it used the key.
+  frm:fire("onKeyPreview", "Cmd+0", "0")
+  local before = frm.view().cx
+  eq(frm:fire("onKeyPreview", "Shift+Left", ""), true)
+  eq(frm.view().cx, before)
+end)
+
+test("form: Enter shows the picture alone, on the whole screen", function()
+  frm.open(root)
+  list.selected = 5 -- img2: 20 x 40, green
+  frm.lstFiles:fire("onChange")
+  frm.flush()
+  eq(frm.fullView(), false)
+  eq(frm:fire("onKeyPreview", "Enter", ""), true)
+  eq(frm.fullView(), true)
+  eq(frm.fullscreen, true)
+  eq(frm.cnvFull.visible, true); eq(frm.splMain.visible, false); eq(frm.lblStatus.visible, false)
+  eq(frm.cnvFull.width, frm.width); eq(frm.cnvFull.height, frm.height)
+  local r, g = pixelOf(frm.cnvFull, math.floor(frm.cnvFull.width / 2), 5)
+  ok(g > 200 and r < 60, "the picture reaches the top and bottom")
+  r, g = pixelOf(frm.cnvFull, 5, math.floor(frm.cnvFull.height / 2))
+  eq(r + g, 0, "and is black beside it")
+  -- The arrows go to the other pictures (not the folders).
+  eq(frm.entries()[list.selected].name, "img2.png")
+  frm:fire("onKeyPreview", "Right", "")
+  eq(frm.entries()[list.selected].name, "img10.png")
+  frm:fire("onKeyPreview", "Down", "")
+  eq(frm.entries()[list.selected].name, "Photo.JPG", "past the folder Misc")
+  frm:fire("onKeyPreview", "Right", "")
+  eq(frm.entries()[list.selected].name, "Photo.JPG", "no more pictures")
+  frm:fire("onKeyPreview", "Home", "")
+  eq(frm.entries()[list.selected].name, "broken.png", "the first picture, not the folders")
+  frm:fire("onKeyPreview", "End", "")
+  eq(frm.entries()[list.selected].name, "Photo.JPG")
+  frm:fire("onKeyPreview", "PageUp", "")
+  eq(frm.entries()[list.selected].name, "img10.png")
+  frm.flush()
+  -- Zoom works there too, and Escape comes back.
+  frm:fire("onKeyPreview", "Cmd+1", "1")
+  eq(frm.view().zoom, 1)
+  frm.cnvFull:fire("onMouseWheel", 0, -1)
+  eq(frm.view().zoom, 1.25)
+  eq(frm:fire("onKeyPreview", "Escape", ""), true)
+  eq(frm.fullView(), false); eq(frm.fullscreen, false)
+  eq(frm.cnvFull.visible, false); eq(frm.splMain.visible, true); eq(frm.lblStatus.visible, true)
+  -- F11 goes both ways, and Enter comes back too.
+  frm:fire("onKeyPreview", "F11", "")
+  eq(frm.fullView(), true)
+  frm:fire("onKeyPreview", "F11", "")
+  eq(frm.fullView(), false)
+  frm:fire("onKeyPreview", "Enter", "")
+  frm:fire("onKeyPreview", "Enter", "")
+  eq(frm.fullView(), false)
+  -- Enter on a folder still opens it.
+  list.selected = 2
+  frm:fire("onKeyPreview", "Enter", "")
+  eq(frm.folder(), root .. "/a")
+  eq(frm.fullView(), false)
+  frm.open(root)
+end)
+
+test("form: the folder and the width of the list are kept", function()
+  frm.open(root .. "/Misc")
+  eq(settings.load().last, root .. "/Misc")
+  frm:fire("onClose")
+  eq(settings.load().split, frm.lstFiles.width)
+  -- A new window opens where it was left, with the list as wide as it was.
+  settings.save { last = root .. "/a", split = 400 }
+  package.loaded["forms.Viewer"] = nil
+  local again = require "forms.Viewer"
+  eq(again.folder(), root .. "/a")
+  eq(again.lstFiles.width, 400); eq(again.cnvImage.left, 400)
+  eq(again.cnvImage.width, again.splMain.width - 400)
+  -- A folder that is gone, or a width that cannot be, is not used.
+  settings.save { last = root .. "/gone", split = 20 }
+  package.loaded["forms.Viewer"] = nil
+  again = require "forms.Viewer"
+  eq(again.folder(), folder.start())
+  eq(again.lstFiles.width, 280)
+  package.loaded["forms.Viewer"] = frm
 end)
 
 ---------------------------------------------------------------- animations
