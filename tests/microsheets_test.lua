@@ -609,6 +609,40 @@ test("save and open from the form", function()
   os.remove(path)
 end)
 
+test("an encrypted workbook needs its password", function()
+  local gui = require "gui"
+  local realBox = gui.passwordbox
+  fresh(false)
+  keys("7") key("Enter")
+  local path = tmp .. "-locked.zms"
+  gui.passwordbox = function() return "pw" end
+  frm.actions.mnuPassword()
+  ok(frm.caption:find("(encrypted)", 1, true), frm.caption)
+  ok(frm.saveTo(path))
+  local f = io.open(path, "rb") local raw = f:read("*a") f:close()
+  ok(not raw:find("microsheets", 1, true), "the manifest is not readable")
+  local b, why, locked = workbook.load(path)
+  eq(b, nil) eq(locked, "locked") ok(why:find("password"), why)
+  b, why, locked = workbook.load(path, "bad")
+  eq(locked, "locked")
+  local answers, asked = { "bad", "pw" }, 0
+  gui.passwordbox = function() asked = asked + 1 return answers[asked] end
+  fresh(false)
+  ok(frm.openPath(path))
+  eq(asked, 2)
+  eq(grid.book:display(grid:sheet(), 1, 1), "7")
+  ok(frm.caption:find("(encrypted)", 1, true), frm.caption)
+  -- A save keeps it, and an empty password takes it off.
+  ok(frm.saveTo(path))
+  eq(select(3, workbook.load(path)), "locked")
+  gui.passwordbox = function() return "" end
+  frm.actions.mnuPassword()
+  ok(frm.saveTo(path))
+  ok(workbook.load(path) ~= nil, "readable without one")
+  gui.passwordbox = realBox
+  os.remove(path)
+end)
+
 test("chart data", function()
   local charts = require "controls.Chart"
   local b, s = sheet({ { "Region", "Q1", "Q2" }, { "North", "10", "12" }, { "South", "8", "x" } })

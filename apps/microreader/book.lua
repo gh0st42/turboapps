@@ -65,10 +65,28 @@ end
 
 ---------------------------------------------------------------- reading
 
--- decode reads the bytes of a .znb (or any zip of Markdown files).
-function M.decode(data)
-  local z, err = zip.load(data)
+-- locked is why the archive cannot be read with the password it has, when
+-- that is the password's fault ("a password is needed", "wrong password"):
+-- it is encrypted all through, so the first encrypted file shows it.
+local function locked(z)
+  for _, name in ipairs(z:list()) do
+    local info = z:info(name)
+    if info and info.encrypted then
+      local _, why = z:read(name)
+      if why and why:find("password", 1, true) then return why end
+      return nil
+    end
+  end
+end
+
+-- decode reads the bytes of a .znb (or any zip of Markdown files). When it
+-- is encrypted and the password is missing or wrong it gives nil, why and
+-- "locked".
+function M.decode(data, password)
+  local z, err = zip.load(data, { password = password })
   if not z then return nil, "not a notebook: " .. tostring(err) end
+  local why = locked(z)
+  if why then return nil, why, "locked" end
   local b = setmetatable({ notes = {}, files = {}, images = {} }, Book)
   for _, name in ipairs(z:list()) do
     local path = M.clean(name)
@@ -81,13 +99,13 @@ function M.decode(data)
   return b
 end
 
-function M.load(path)
+function M.load(path, password)
   local f, err = io.open(path, "rb")
   if not f then return nil, err end
   local data = f:read("*a")
   f:close()
-  local b, derr = M.decode(data)
-  if not b then return nil, derr end
+  local b, derr, why = M.decode(data, password)
+  if not b then return nil, derr, why end
   b.name = M.label(M.basename(path:gsub("\\", "/")):gsub("%.znb$", ""))
   return b
 end

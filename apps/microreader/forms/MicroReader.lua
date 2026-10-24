@@ -142,7 +142,14 @@ local function setBook(b, file, at)
 end
 
 local function openPath(file, at)
-  local b, err = bookmod.load(file)
+  local b, err, why = bookmod.load(file)
+  -- An encrypted book asks for its password until it is right.
+  while not b and why == "locked" do
+    local pw = gui.passwordbox((err:find("wrong", 1, true) and "Wrong password. " or "")
+      .. bookmod.basename(file) .. " is encrypted.\nPassword:", "Open")
+    if not pw then return false end
+    b, err, why = bookmod.load(file, pw)
+  end
   if not b then
     gui.msgbox("Could not open " .. file .. ":\n" .. tostring(err), "ok", "microreader")
     return false

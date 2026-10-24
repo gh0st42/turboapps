@@ -343,7 +343,7 @@ end
 test("context menu: what it offers depends on what is clicked", function()
   frm.go(box)
   eq(itemNames(frm.menuFor(rowNamed("beta"))), "open system - cut copy paste - rename delete - copyPath copyName - newFolder")
-  eq(itemNames(frm.menuFor(rowNamed("app.ztl"))), "run - cut copy paste - rename delete - copyPath copyName - newFolder")
+  eq(itemNames(frm.menuFor(rowNamed("app.ztl"))), "run - archive extract - cut copy paste - rename delete - copyPath copyName - newFolder")
   eq(itemNames(frm.menuFor(rowNamed("Beta.lua"))), "open run Open &With - cut copy paste - rename delete - copyPath copyName - newFolder")
   eq(itemNames(frm.menuFor(0)), "newFolder paste - hidden &Sort By refresh - copyFolderPath system - settings")
 end)
@@ -706,6 +706,7 @@ end)
 
 test("form: a picture opens in the image viewer, and Open With offers the others", function()
   local gui = require "gui"
+  local system = fs.opener("x", gui.platform)[1] -- what the system opens files with: open, xdg-open, ...
   local pics = root .. "/pics"
   lfs.mkdir(pics)
   write(pics .. "/cat.png", ""); write(pics .. "/data.bin", ""); write(pics .. "/notes.txt", "")
@@ -728,7 +729,7 @@ test("form: a picture opens in the image viewer, and Open With offers the others
   -- What no app of ours opens goes to the system.
   list:pick(rowOf("data.bin"))
   list:fire("onOpen", list.current)
-  eq(started[1], "open"); eq(started[2], pics .. "/data.bin")
+  eq(started[1], system); eq(started[2], pics .. "/data.bin")
   -- The menu: the apps there are for it (pixel is not made here), and the system's.
   local menu = frm.menuFor(rowOf("cat.png"))
   local with
@@ -738,22 +739,138 @@ test("form: a picture opens in the image viewer, and Open With offers the others
   with[1][2]()
   eq(started[2], turbo .. "/dist/imageviewer.ztl")
   with[3][2]()
-  eq(started[1], "open")
+  eq(started[1], system)
   -- A file nothing of ours opens has no such menu.
   for _, it in ipairs(frm.menuFor(rowOf("data.bin"))) do ok(not (type(it) == "table" and it[1] == "Open &With")) end
   -- Turned off, everything goes to the system.
   frm.applySettings { openWithApps = false }
   list:pick(rowOf("cat.png"))
   list:fire("onOpen", list.current)
-  eq(started[1], "open"); eq(started[2], pics .. "/cat.png")
+  eq(started[1], system); eq(started[2], pics .. "/cat.png")
   frm.applySettings { openWithApps = true }
   -- An app that cannot be found: the system opens it.
   openwith.ctx = { env = "", arg0 = "", cwd = "/" }
   list:pick(rowOf("cat.png"))
   list:fire("onOpen", list.current)
-  eq(started[1], "open")
+  eq(started[1], system)
   openwith.ctx = { env = turbo, arg0 = "", cwd = "/" }
   gui.spawn = realSpawn
+end)
+
+---------------------------------------------------------------- archives
+
+local zip = require "zip"
+
+local function makeZip(path, password, files)
+  local w = zip.create(password and { password = password } or nil)
+  for _, f in ipairs(files) do w:add(f[1], f[2], { modified = f[3] }) end
+  local bytes = assert(w:close())
+  write(path, bytes)
+end
+
+local arcDir = root .. "/arc"
+lfs.mkdir(arcDir)
+
+test("archive: lists what is in a zip and unpacks it, a step at a time", function()
+  local z = arcDir .. "/a.zip"
+  makeZip(z, nil, { { "one.txt", "1", 1000000000 }, { "sub/deep/two.txt", ("x"):rep(5000) }, { "sub/three.txt", "3" } })
+  local a = assert(fs.archive(z))
+  eq(#a.entries, 3); eq(a.total, 5002); eq(a.encrypted, false)
+  local out = arcDir .. "/out"
+  local job = a:extract(out)
+  ok(run(job, 1000) > 5, "the big file takes several steps")
+  eq(job.count, 3); eq(#job.errors, 0); eq(job.bytes, job.total)
+  eq(readAll(out .. "/one.txt"), "1")
+  eq(#readAll(out .. "/sub/deep/two.txt"), 5000)
+  eq(lfs.attributes(out .. "/one.txt", "modification"), 1000000000, "it keeps the time")
+  -- Again: nothing is overwritten.
+  job = a:extract(out, { "one.txt" })
+  run(job)
+  eq(readAll(out .. "/one copy.txt"), "1")
+  -- A folder in a list takes all in it.
+  local part = arcDir .. "/part"
+  job = a:extract(part, { "sub/" })
+  run(job)
+  eq(job.count, 2); ok(not fs.exists(part .. "/one.txt"), "only the folder")
+  eq(readAll(part .. "/sub/three.txt"), "3")
+end)
+
+test("archive: names that reach out of the folder are refused", function()
+  local z = arcDir .. "/evil.zip"
+  makeZip(z, nil, { { "../escape.txt", "no" }, { "/abs.txt", "no" }, { "ok.txt", "yes" } })
+  local out = arcDir .. "/evilout"
+  local job = assert(fs.archive(z)):extract(out)
+  run(job)
+  eq(job.count, 1); eq(#job.errors, 2)
+  ok(not fs.exists(arcDir .. "/escape.txt"), "nothing left the folder")
+  eq(readAll(out .. "/ok.txt"), "yes")
+end)
+
+test("archive: an encrypted one needs its password", function()
+  local z = arcDir .. "/secret.zip"
+  makeZip(z, "pw", { { "s.txt", "hidden" } })
+  local a, why, locked = fs.archive(z)
+  eq(a, nil); eq(locked, "locked"); ok(why:find("password"), why)
+  a, why, locked = fs.archive(z, "nope")
+  eq(locked, "locked"); ok(why:find("wrong"), why)
+  a = assert(fs.archive(z, "pw"))
+  eq(a.encrypted, true)
+  local job = a:extract(arcDir .. "/secretout")
+  run(job)
+  eq(readAll(arcDir .. "/secretout/s.txt"), "hidden")
+  local junk = arcDir .. "/junk.zip"
+  write(junk, "not a zip")
+  a, why, locked = fs.archive(junk)
+  eq(a, nil); eq(locked, nil)
+end)
+
+test("archive: the window lists it, asks the password, and unpacks", function()
+  local gui = require "gui"
+  local form = require "forms.Archive"
+  local z = arcDir .. "/win.zip"
+  makeZip(z, "pw", { { "a.txt", "alpha" }, { "d/b.txt", "beta" } })
+  local asked = 0
+  local realBox, realMsg, realDir = gui.passwordbox, gui.msgbox, gui.choosedir
+  gui.passwordbox = function()
+    asked = asked + 1
+    return asked == 1 and "wrong" or "pw"
+  end
+  gui.msgbox = function() return "ok" end
+  ok(form.fill(z), "opened")
+  eq(asked, 2)
+  eq(#form.lstEntries.items, 2)
+  ok(form.lblInfo.caption:find("encrypted"), form.lblInfo.caption)
+  -- Everything, to a folder chosen.
+  gui.choosedir = function() return arcDir .. "/winout" end
+  form.cmdAll:fire("onClick")
+  local r = form.running()
+  ok(r, "it is running")
+  while form.running() do r.tick() end
+  eq(readAll(arcDir .. "/winout/d/b.txt"), "beta")
+  eq(form.extracted.count, 2)
+  -- One selected.
+  form.lstEntries.selected = 1
+  form.lstEntries:fire("onChange")
+  gui.choosedir = function() return arcDir .. "/winone" end
+  form.cmdSelected:fire("onClick")
+  r = form.running()
+  while form.running() do r.tick() end
+  eq(readAll(arcDir .. "/winone/a.txt"), "alpha"); ok(not fs.exists(arcDir .. "/winone/d"), "only the one")
+  -- To a folder of its own, beside the archive.
+  form.cmdFolder:fire("onClick")
+  r = form.running()
+  while form.running() do r.tick() end
+  eq(readAll(arcDir .. "/win/a.txt"), "alpha")
+  gui.passwordbox, gui.msgbox, gui.choosedir = realBox, realMsg, realDir
+end)
+
+test("archive: the menu offers it for zip files", function()
+  write(box .. "/pack.zip", "x")
+  frm.go(box)
+  local i = rowNamed("pack.zip")
+  ok(itemNames(frm.menuFor(i)):find("archive extract", 1, true), itemNames(frm.menuFor(i)))
+  fs.remove(box .. "/pack.zip")
+  frm.go(box)
 end)
 
 -- Tidy up.

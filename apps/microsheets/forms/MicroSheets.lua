@@ -21,6 +21,7 @@ local tabs = frm.tabSheets
 
 local path = nil        -- the file shown, or nil
 local csvSep = nil      -- its separator, when it is a CSV file
+local password = nil    -- what the workbook is encrypted with, or nil
 local settings = workbook.loadSettings()
 local syncing = false   -- the formula bar is being set from here
 
@@ -74,7 +75,7 @@ end
 
 local function updateTitle()
   local name = path and workbook.basename(path) or "Untitled"
-  frm.caption = (grid.book.dirty and "• " or "") .. name .. " - microsheets"
+  frm.caption = (grid.book.dirty and "• " or "") .. name .. (password and " (encrypted)" or "") .. " - microsheets"
 end
 
 local function rangeName()
@@ -238,8 +239,8 @@ end
 
 ---------------------------------------------------------------- files
 
-local function setBook(b, file, sep)
-  path, csvSep = file, sep
+local function setBook(b, file, sep, pw)
+  path, csvSep, password = file, sep, pw
   grid:setBook(b)
   tabs.book = b
   showChecks()
@@ -247,12 +248,20 @@ local function setBook(b, file, sep)
 end
 
 local function openPath(file)
-  local b, sepOrErr = workbook.load(file)
+  local b, sepOrErr, why = workbook.load(file)
+  local pw
+  -- An encrypted workbook asks for its password until it is right.
+  while not b and why == "locked" do
+    pw = gui.passwordbox((sepOrErr:find("wrong", 1, true) and "Wrong password. " or "")
+      .. workbook.basename(file) .. " is encrypted.\nPassword:", "Open")
+    if not pw then return false end
+    b, sepOrErr, why = workbook.load(file, pw)
+  end
   if not b then
     gui.msgbox("Could not open " .. file .. ":\n" .. tostring(sepOrErr), "ok", "microsheets")
     return false
   end
-  setBook(b, file, workbook.isCSV(file) and sepOrErr or nil)
+  setBook(b, file, workbook.isCSV(file) and sepOrErr or nil, pw)
   return true
 end
 
@@ -262,7 +271,7 @@ local function saveTo(file, asCSV)
   if asCSV then
     ok, err = workbook.exportCSV(file, grid.book, sheet(), csvSep)
   else
-    ok, err = workbook.save(file, grid.book)
+    ok, err = workbook.save(file, grid.book, password)
   end
   if not ok then
     gui.msgbox("Could not save " .. file .. ":\n" .. tostring(err), "ok", "microsheets")
@@ -297,6 +306,8 @@ end
 
 local function save()
   if not path then return saveAs() end
+  -- A CSV file cannot be encrypted: it is saved as a workbook instead.
+  if workbook.isCSV(path) and password then return saveAs() end
   if workbook.isCSV(path) then
     if hasMore() then
       local answer = gui.msgbox(workbook.basename(path) .. " can keep only the values of one sheet, not its formulas or other sheets.\n\n"
@@ -316,6 +327,16 @@ local function confirmDiscard()
     "yesnocancel", "microsheets")
   if answer == "yes" then return save() end
   return answer == "no"
+end
+
+-- setPassword encrypts the workbook, all of it, when it is next saved; an
+-- empty password takes the encryption off.
+local function setPassword()
+  local pw = gui.passwordbox("Password for this workbook.\nLeave it empty to remove the password.", "Set Password", true)
+  if not pw then return end
+  password = pw ~= "" and pw or nil
+  grid.book.dirty = true
+  updateTitle()
 end
 
 local function newBook()
@@ -505,6 +526,7 @@ end
 
 local actions = {
   mnuNew = newBook,
+  mnuPassword = setPassword,
   mnuOpen = openDialog,
   mnuSave = save,
   mnuSaveAs = saveAs,

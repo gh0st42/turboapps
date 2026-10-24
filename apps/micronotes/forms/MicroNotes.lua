@@ -36,7 +36,7 @@ local function bookName()
 end
 
 local function updateTitle()
-  frm.caption = (nb.dirty and "• " or "") .. bookName() .. " - micronotes"
+  frm.caption = (nb.dirty and "• " or "") .. bookName() .. (nb.password and " (encrypted)" or "") .. " - micronotes"
 end
 
 local function updateStatus(note)
@@ -208,6 +208,15 @@ local function changed()
   end
 end
 
+-- setPassword encrypts the notebook, all of it, from its next save; an
+-- empty password takes the encryption off.
+local function setPassword()
+  local pw = gui.passwordbox("Password for this notebook.\nLeave it empty to remove the password.", "Set Password", true)
+  if not pw then return end
+  nb.password = pw ~= "" and pw or nil
+  changed()
+end
+
 local function confirmDiscard()
   flush()
   if not nb.dirty then return true end
@@ -236,7 +245,14 @@ local function setNotebook(book, file)
 end
 
 local function openPath(file)
-  local book, err = notebook.load(file)
+  local book, err, why = notebook.load(file)
+  -- An encrypted notebook asks for its password until it is right.
+  while not book and why == "locked" do
+    local pw = gui.passwordbox((err:find("wrong", 1, true) and "Wrong password. " or "")
+      .. notebook.basename(file) .. " is encrypted.\nPassword:", "Open")
+    if not pw then return false end
+    book, err, why = notebook.load(file, pw)
+  end
   if not book then
     gui.msgbox("Could not open " .. file .. ":\n" .. tostring(err), "ok", "micronotes")
     return false
@@ -819,6 +835,7 @@ local actions = {
     local file = gui.openfile { title = "Open Notebook", filter = BOOK_FILTER }
     if file then openPath(file) end
   end,
+  mnuPassword = setPassword,
   mnuSave = save,
   mnuSaveAs = saveAs,
   mnuImport = function()

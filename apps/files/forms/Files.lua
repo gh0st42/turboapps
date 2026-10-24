@@ -9,6 +9,7 @@ local gui = require "gui"
 local fs = require "fs"
 local openwith = require "openwith"
 local settingsForm = require "forms.Settings"
+local archiveForm = require "forms.Archive"
 local frm = gui.load "Files" --[[@as forms.Files]]
 
 local settings = fs.loadSettings()
@@ -183,6 +184,16 @@ local function openWithApp(name, path)
   return true
 end
 
+-- lookInto shows a zip archive's contents, to unpack all or some of them;
+-- how = "folder" unpacks it at once into a folder of its own. The folder
+-- shown is read again after, with what came out in it.
+local function lookInto(path, how)
+  archiveForm.look(path, how)
+  show()
+  local ex = archiveForm.extracted
+  if ex then frm.lblStatus.caption = ("  Unpacked %d into %s"):format(ex.count, ex.dest) end
+end
+
 -- open opens what is picked: a folder is gone into, a .ztl is run, and a file
 -- is opened in the app of ours for it when there is one (and that is not
 -- turned off in the settings), else in the system's own program.
@@ -192,6 +203,8 @@ local function open(e)
     go(e.path)
   elseif fs.extension(e.name) == "ztl" then
     run(e.path)
+  elseif fs.extension(e.name) == "zip" then
+    lookInto(e.path)
   else
     local app = settings.openWithApps and openwith.available(e.path)[1]
     if not (app and openWithApp(app, e.path)) then openWithSystem(e.path) end
@@ -577,6 +590,11 @@ local function menuFor(i)
       add { "Open &With", with }
     end
   end
+  if fs.isArchive(e.name) and not e.dir then
+    add "-"
+    add { "Open as &Archive...", name = "archive", function() lookInto(e.path) end }
+    add { "E&xtract to Folder", name = "extract", function() lookInto(e.path, "folder") end }
+  end
   add "-"
   add { "Cu&t", name = "cut", function() setClip(true) end }
   add { "&Copy", name = "copy", function() setClip(false) end }
@@ -760,6 +778,7 @@ frm.selected = selected
 frm.paste, frm.setClip, frm.stopPaste = paste, setClip, stopPaste
 frm.clipboard = function() return clip end
 frm.pasting = function() return pasting end
+frm.lookInto = lookInto
 frm.state = function()
   return { dir = dir, entries = entries, settings = settings, history = history }
 end

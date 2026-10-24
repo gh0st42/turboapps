@@ -167,6 +167,14 @@ what it is and how it is used. UI text is plain English, without jargon.
 - pixel has an Advanced menu (a tilemap grid with tile numbers, copy, cut,
   paste and clear of tiles, focus on one tile, a hand tool). The hand
   pans with a Scroll's `scrollX` and `scrollY`, which tlua has from 0.7.2.
+- microword, microsheets and micronotes can encrypt what they save (File >
+  Set Password: all of the zip, AES-256, with tlua 0.9.2's `zip` and
+  `gui.passwordbox` after it); the document modules take a `password` on
+  load and save, and a load that fails for the password gives `nil, why,
+  "locked"` so the form asks again. File names stay readable in a zip
+  whatever is done. microreader only opens such books. files opens zip
+  archives in forms/Archive.lua (fs.archive and `archive:extract`, a job like
+  paste's, refusing names that reach out of the folder).
 - microword and micronotes edit tables in place: MarkdownEdit puts the caret
   in a cell (`ed.cell`), where typing, the arrows, Tab and Enter work, and
   `ed:insertTable`, `insertRow`, `insertColumn`, `deleteRow`, `deleteColumn`

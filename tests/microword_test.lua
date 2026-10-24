@@ -151,6 +151,45 @@ test("form: a table is made, filled in cell by cell, and changed from the Table 
   eq(#edit.ed.blocks, 3)
 end)
 
+test("form: a password encrypts the whole document, and opening it asks", function()
+  local gui = require "gui"
+  local realBox = gui.passwordbox
+  edit:load("# Secret plans\n")
+  local file = root .. "/locked.zmd"
+  gui.passwordbox = function() return "hunter2" end
+  frm.actions.mnuPassword()
+  ok(frm.caption:find("(encrypted)", 1, true), frm.caption)
+  ok(frm.saveTo(file), "saved")
+  -- Nothing readable is left in the file, and the module says it is locked.
+  local f = io.open(file, "rb") local raw = f:read("*a") f:close()
+  ok(not raw:find("Secret plans", 1, true), "the text is not in the file")
+  local blocks, why, locked = zmd.load(file)
+  eq(blocks, nil) eq(locked, "locked") ok(why:find("password"), why)
+  blocks, why, locked = zmd.load(file, "nope")
+  eq(locked, "locked") ok(why:find("wrong"), why)
+  -- The form asks until the password is right, and keeps it for saving.
+  local answers, asked = { "nope", "hunter2" }, 0
+  gui.passwordbox = function() asked = asked + 1 return answers[asked] end
+  edit:load("")
+  ok(frm.openPath(file), "opened")
+  eq(asked, 2)
+  eq(edit:markdown(), "# Secret plans\n")
+  ok(frm.caption:find("(encrypted)", 1, true), frm.caption)
+  edit.ed:moveToDocument(1)
+  typeKeys("!")
+  ok(frm.saveTo(file), "saved again")
+  eq(zmd.load(file, "hunter2") ~= nil, true)
+  -- Cancelling the box does not open it; an empty password takes it off.
+  gui.passwordbox = function() return nil end
+  ok(not frm.openPath(file), "cancelled")
+  gui.passwordbox = function() return "" end
+  frm.actions.mnuPassword()
+  ok(not frm.caption:find("encrypted", 1, true), frm.caption)
+  ok(frm.saveTo(file))
+  ok(zmd.load(file) ~= nil, "open without a password")
+  gui.passwordbox = realBox
+end)
+
 test("form: save, then open again", function()
   local file = root .. "/form.zmd"
   ok(frm.saveTo(file), "saved")

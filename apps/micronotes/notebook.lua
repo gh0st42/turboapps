@@ -469,7 +469,7 @@ end
 
 -- encode gives the bytes of a .znb.
 function Notebook:encode()
-  local w = zip.create()
+  local w = zip.create(self.password and { password = self.password } or nil)
   w:add(M.MANIFEST, manifest(self))
   for _, p in ipairs(self:notePaths()) do w:add(p, self.notes[p]) end
   local files = {}
@@ -494,11 +494,30 @@ local function unquote(s)
   return (s:gsub("\\u(%x%x%x%x)", function(h) return string.char(tonumber(h, 16) % 256) end):gsub('\\(["\\/])', "%1"))
 end
 
--- decode reads the bytes of a .znb (or any zip of Markdown files).
-function M.decode(data)
-  local z, err = zip.load(data)
+-- locked is why the archive cannot be read with the password it has, when
+-- that is the password's fault ("a password is needed", "wrong password"):
+-- it is encrypted all through, so the first encrypted file shows it.
+local function locked(z)
+  for _, name in ipairs(z:list()) do
+    local info = z:info(name)
+    if info and info.encrypted then
+      local _, why = z:read(name)
+      if why and why:find("password", 1, true) then return why end
+      return nil
+    end
+  end
+end
+
+-- decode reads the bytes of a .znb (or any zip of Markdown files). When it
+-- is encrypted and the password is missing or wrong it gives nil, why and
+-- "locked"; the notebook keeps the password to save with.
+function M.decode(data, password)
+  local z, err = zip.load(data, { password = password })
   if not z then return nil, "not a notebook: " .. tostring(err) end
+  local why = locked(z)
+  if why then return nil, why, "locked" end
   local nb = M.new(false)
+  nb.password = password
   local text = z:read(M.MANIFEST) or ""
   for _, name in ipairs(z:list()) do
     local path = M.clean(name)
@@ -522,10 +541,10 @@ function M.decode(data)
   return nb
 end
 
-function M.load(path)
+function M.load(path, password)
   local data, err = readFile(path)
   if not data then return nil, err end
-  return M.decode(data)
+  return M.decode(data, password)
 end
 
 -- importFolder reads a folder of Markdown notes and their files, as other

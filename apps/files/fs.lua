@@ -4,6 +4,7 @@
 -- which Windows takes as well as "\".
 
 local lfs = require "lfs"
+local zip = require "zip"
 
 local M = {}
 
@@ -472,6 +473,169 @@ end
 -- cancel stops it at the next chunk; what was copied already stays.
 function Job:cancel()
   self.cancelled = true
+end
+
+---------------------------------------------------------------- archives
+
+-- ARCHIVES are the files that are zip archives, which Files can look into
+-- and extract, whatever their own program is.
+M.ARCHIVES = { zip = true, zmd = true, znb = true, zms = true, ztl = true, jar = true }
+
+function M.isArchive(name) return M.ARCHIVES[M.extension(name)] == true end
+
+local Archive = {}
+Archive.__index = Archive
+
+-- archive opens a zip file to look into. It returns an archive, or nil and
+-- why: with "locked" as a third result when it is encrypted and the password
+-- is missing or wrong. An archive has
+--
+--   path, password, encrypted   the file, what it is read with, whether
+--   entries                     { name =, size =, modified =, encrypted = }
+--                               of each file in it, in its order
+--   total                       the bytes of all of it, unpacked
+function M.archive(path, password)
+  local f, err = io.open(path, "rb")
+  if not f then return nil, err end
+  local data = f:read("*a")
+  f:close()
+  local z, zerr = zip.load(data, { password = password })
+  if not z then return nil, zerr end
+  local a = setmetatable({ path = path, password = password, z = z, entries = {}, total = 0, encrypted = false }, Archive)
+  for _, name in ipairs(z:list()) do
+    local info = z:info(name) or {}
+    a.entries[#a.entries + 1] = { name = name, size = info.size or 0, modified = info.modified, encrypted = info.encrypted }
+    a.total = a.total + (info.size or 0)
+    if info.encrypted then a.encrypted = true end
+  end
+  -- Encrypted all through, as the other apps write them: the first file
+  -- shows whether the password is right.
+  for _, e in ipairs(a.entries) do
+    if e.encrypted then
+      local _, why = z:read(e.name)
+      if why and why:find("password", 1, true) then return nil, why, "locked" end
+      break
+    end
+  end
+  return a
+end
+
+-- safeName cleans a name from an archive into a relative path, or nil when
+-- it would reach out of the folder it is extracted to.
+local function safeName(name)
+  name = name:gsub("\\", "/")
+  if name:sub(1, 1) == "/" or name:match("^%a:") then return nil end
+  local parts = {}
+  for part in name:gmatch("[^/]+") do
+    if part == ".." then return nil end
+    if part ~= "." then parts[#parts + 1] = part end
+  end
+  if #parts == 0 then return nil end
+  return table.concat(parts, "/")
+end
+M.safeName = safeName
+
+-- mkdirs makes a folder and those above it that are not there yet.
+local function mkdirs(path)
+  if M.isDir(path) then return true end
+  local parent = M.parent(path)
+  if parent ~= path and not mkdirs(parent) then return false end
+  return lfs.mkdir(path)
+end
+M.mkdirs = mkdirs
+
+-- extract makes a job of unpacking names (every file when not given, else
+-- a list of names, where one ending in "/" is a folder and all in it) into
+-- the folder dest, which is made when it is not there. A file that is there
+-- already is not overwritten: the new one is named "a copy.txt". Names that
+-- reach out of dest are refused. The job is run as paste's is, with
+-- job:step() and job:cancel(), and has the same fields: total, bytes,
+-- current, count, results (where each went), errors.
+function Archive:extract(dest, names)
+  dest = M.normalize(dest)
+  local job = setmetatable({ items = {}, total = 0, bytes = 0, count = 0, results = {}, errors = {},
+    skipped = 0, spent = 0, budget = CHUNK, finished = false }, Job)
+  local wanted
+  if names then
+    wanted = {}
+    for _, n in ipairs(names) do wanted[#wanted + 1] = n end
+  end
+  local function chosen(name)
+    if not wanted then return true end
+    for _, w in ipairs(wanted) do
+      if w == name or (w:sub(-1) == "/" and name:sub(1, #w) == w) then return true end
+    end
+    return false
+  end
+  for _, e in ipairs(self.entries) do
+    if chosen(e.name) and e.name:sub(-1) ~= "/" then
+      local rel = safeName(e.name)
+      if rel then
+        job.items[#job.items + 1] = { entry = e, rel = rel }
+        job.total = job.total + e.size
+      else
+        job.errors[#job.errors + 1] = e.name .. ": not unpacked, its name reaches out of the folder"
+      end
+    end
+  end
+  job.co = coroutine.create(function()
+    if not mkdirs(dest) then
+      job.errors[#job.errors + 1] = M.basename(dest) .. ": the folder cannot be made"
+      job.finished = true
+      return
+    end
+    for _, item in ipairs(job.items) do
+      if job.cancelled then break end
+      job.current = item.rel
+      local sub = item.rel:match("^(.*)/[^/]*$")
+      local folder = sub and M.join(dest, sub) or dest
+      local data, why
+      if mkdirs(folder) then
+        data, why = self.z:read(item.entry.name, self.password)
+      else
+        why = "the folder cannot be made"
+      end
+      if data then
+        local to = M.join(folder, M.uniqueName(folder, M.basename(item.rel), false))
+        local ok, werr = M.writeChunks(job, to, data)
+        if ok then
+          if item.entry.modified then lfs.touch(to, item.entry.modified, item.entry.modified) end
+          job.count = job.count + 1
+          job.results[#job.results + 1] = to
+        elseif werr ~= "cancelled" then
+          job.errors[#job.errors + 1] = item.rel .. ": " .. tostring(werr)
+        end
+      else
+        job.errors[#job.errors + 1] = item.rel .. ": " .. tostring(why)
+      end
+    end
+    job.finished = true
+  end)
+  if #job.items == 0 then job.finished = true end
+  return job
+end
+
+-- writeChunks writes data to a file a chunk at a time, giving the program
+-- back as copyFile does; a file that was not all written is taken away.
+function M.writeChunks(job, to, data)
+  local f, err = io.open(to, "wb")
+  if not f then return nil, err end
+  local at = 1
+  repeat
+    if job.cancelled then f:close() os.remove(to) return nil, "cancelled" end
+    local piece = data:sub(at, at + math.min(CHUNK, job.budget) - 1)
+    local ok, werr = f:write(piece)
+    if not ok then f:close() os.remove(to) return nil, werr end
+    at = at + #piece
+    job.bytes = job.bytes + #piece
+    job.spent = job.spent + #piece
+    if job.spent >= job.budget then
+      job.spent = 0
+      coroutine.yield()
+    end
+  until at > #data
+  f:close()
+  return true
 end
 
 ---------------------------------------------------------------- places

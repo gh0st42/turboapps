@@ -81,15 +81,32 @@ function M.used(blocks)
   return set
 end
 
+-- locked is why the archive cannot be read with the password it has, when
+-- that is the password's fault ("a password is needed", "wrong password"):
+-- it is encrypted all through, so the first encrypted file shows it.
+local function locked(z)
+  for _, name in ipairs(z:list()) do
+    local info = z:info(name)
+    if info and info.encrypted then
+      local _, why = z:read(name)
+      if why and why:find("password", 1, true) then return why end
+      return nil
+    end
+  end
+end
+
 -- load reads a .zmd, or a .md and the pictures beside it. It returns the
--- blocks and the assets, or nil and why.
-function M.load(path)
+-- blocks and the assets, or nil and why: and, as a third result, "locked"
+-- when the document is encrypted and the password is missing or wrong.
+function M.load(path, password)
   local data, err = readFile(path)
   if not data then return nil, err end
   local assets = {}
   if M.extension(path) == "zmd" or data:sub(1, 2) == "PK" then
-    local arc, zerr = zip.load(data)
+    local arc, zerr = zip.load(data, { password = password })
     if not arc then return nil, "not a microword document: " .. tostring(zerr) end
+    local why = locked(arc)
+    if why then return nil, why, "locked" end
     local text = arc:read(M.MAIN)
     if not text then return nil, "not a microword document: it has no " .. M.MAIN end
     for _, name in ipairs(arc:list()) do
@@ -116,9 +133,10 @@ function M.load(path)
   return blocks, assets
 end
 
--- save writes a .zmd: the Markdown, and the pictures it uses.
-function M.save(path, blocks, assets)
-  local w = zip.create()
+-- save writes a .zmd: the Markdown, and the pictures it uses, all
+-- encrypted with the password when there is one.
+function M.save(path, blocks, assets, password)
+  local w = zip.create(password and { password = password } or nil)
   w:add(M.MAIN, md.write(blocks))
   local names = {}
   for name in pairs(M.used(blocks)) do

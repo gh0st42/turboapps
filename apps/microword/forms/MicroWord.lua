@@ -14,6 +14,7 @@ local frm = gui.load "MicroWord" --[[@as forms.MicroWord]]
 
 local edit = frm.edDoc
 local path -- the .zmd the document was opened from or saved to
+local password -- what it is encrypted with, or nil
 
 local DOC_FILTER = "Documents\t*.{zmd,md}\nmicroword\t*.zmd\nMarkdown\t*.md"
 local SAVE_FILTER = "microword\t*.zmd"
@@ -30,7 +31,7 @@ local function ed() return edit.ed end
 
 local function updateTitle()
   local name = path and zmd.basename(path) or "Untitled"
-  frm.caption = (ed().dirty and "*" or "") .. name .. " - microword"
+  frm.caption = (ed().dirty and "*" or "") .. name .. (password and " (encrypted)" or "") .. " - microword"
 end
 
 local function updateStatus()
@@ -78,22 +79,30 @@ end
 
 ---------------------------------------------------------------- files
 
-local function setDocument(blocks, assets, file)
+local function setDocument(blocks, assets, file, pw)
   edit:load(blocks, assets)
-  path = file
+  path, password = file, pw
   updateTitle()
   updateToolbar()
   updateStatus()
 end
 
 local function openPath(file)
-  local blocks, assets = zmd.load(file)
+  local blocks, assets, why = zmd.load(file)
+  local pw
+  -- An encrypted document asks for its password until it is right.
+  while not blocks and why == "locked" do
+    pw = gui.passwordbox((assets:find("wrong", 1, true) and "Wrong password. " or "")
+      .. zmd.basename(file) .. " is encrypted.\nPassword:", "Open")
+    if not pw then return false end
+    blocks, assets, why = zmd.load(file, pw)
+  end
   if not blocks then
     gui.msgbox(("Cannot open %s.\n\n%s"):format(file, tostring(assets)), "ok", "microword")
     return false
   end
   -- A .md is opened as a new document: saving makes a .zmd of it.
-  setDocument(blocks, assets, zmd.extension(file) == "zmd" and file or nil)
+  setDocument(blocks, assets, zmd.extension(file) == "zmd" and file or nil, pw)
   if zmd.extension(file) ~= "zmd" then
     frm.caption = zmd.basename(file) .. " - microword"
   end
@@ -102,7 +111,7 @@ end
 
 local function saveTo(file)
   if zmd.extension(file) ~= "zmd" then file = file .. ".zmd" end
-  local ok, err = zmd.save(file, ed().blocks, edit.pictures)
+  local ok, err = zmd.save(file, ed().blocks, edit.pictures, password)
   if not ok then
     gui.msgbox(("Cannot save %s.\n\n%s"):format(file, tostring(err)), "ok", "microword")
     return false
@@ -140,6 +149,16 @@ local function openDialog()
   if not confirmDiscard() then return end
   local file = gui.openfile { title = "Open", filter = DOC_FILTER }
   if file then openPath(file) end
+end
+
+-- setPassword encrypts the document, all of it, when it is next saved; an
+-- empty password takes the encryption off.
+local function setPassword()
+  local pw = gui.passwordbox("Password for this document.\nLeave it empty to remove the password.", "Set Password", true)
+  if not pw then return end
+  password = pw ~= "" and pw or nil
+  ed().dirty = true
+  updateTitle()
 end
 
 local function exportMarkdown()
@@ -275,7 +294,8 @@ Cmd+0 to Cmd+3         normal text, headings
 Cmd+U                  the Markdown the document is kept as
 
 Documents are saved as .zmd: a zip of the Markdown, as
-document.md, and the pictures in it, in assets/.]]
+document.md, and the pictures in it, in assets/.
+File > Set Password encrypts all of it (AES-256, which 7-Zip opens).]]
 
 local actions = {
   mnuNew = newDocument,
@@ -283,6 +303,7 @@ local actions = {
   mnuSave = save,
   mnuSaveAs = saveAs,
   mnuExport = exportMarkdown,
+  mnuPassword = setPassword,
   mnuExit = function() frm:close() end,
   mnuUndo = function() change(function(e) e:undo() end) end,
   mnuRedo = function() change(function(e) e:redo() end) end,

@@ -186,4 +186,26 @@ test("form: a topic opens at its page", function()
   eq(frm.goTo("Nowhere"), false)
 end)
 
+test("form: an encrypted book asks for its password", function()
+  local gui = require "gui"
+  local realBox = gui.passwordbox
+  local file = root .. "/locked.znb"
+  local w = zip.create { password = "pw" }
+  w:add("notebook.json", '{ "app": "micronotes", "version": 1 }\n')
+  for p, text in pairs(PAGES) do w:add(p, text) end
+  local f = io.open(file, "wb") f:write(w:close()) f:close()
+  local b, why, locked = bookmod.load(file)
+  eq(b, nil) eq(locked, "locked") ok(why:find("password"), why)
+  eq(select(3, bookmod.load(file, "bad")), "locked")
+  ok(bookmod.load(file, "pw") ~= nil)
+  local answers, asked = { "bad", "pw" }, 0
+  gui.passwordbox = function() asked = asked + 1 return answers[asked] end
+  ok(frm.openPath(file))
+  eq(asked, 2)
+  eq(select(2, frm.state()), "index.md")
+  gui.passwordbox = function() return nil end
+  ok(not frm.openPath(file), "cancelled")
+  gui.passwordbox = realBox
+end)
+
 t.done("microreader")

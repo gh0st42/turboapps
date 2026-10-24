@@ -119,9 +119,10 @@ local function fileName(name, used)
   return candidate
 end
 
--- encode gives the bytes of a .zms file.
-function M.encode(b)
-  local w = zip.create()
+-- encode gives the bytes of a .zms file, encrypted all through with the
+-- password when there is one.
+function M.encode(b, password)
+  local w = zip.create(password and { password = password } or nil)
   local manifest = { app = "microsheets", version = 1, active = b.active, sheets = {} }
   local used = {}
   local files = {}
@@ -147,18 +148,36 @@ function M.encode(b)
   return w:close()
 end
 
-function M.save(path, b)
-  local bytes, err = M.encode(b)
+function M.save(path, b, password)
+  local bytes, err = M.encode(b, password)
   if not bytes then return nil, err end
   return writeFile(path, bytes)
 end
 
 ---------------------------------------------------------------- loading
 
--- decode reads the bytes of a .zms file into a workbook.
-function M.decode(data)
-  local z, err = zip.load(data)
+-- locked is why the archive cannot be read with the password it has, when
+-- that is the password's fault ("a password is needed", "wrong password"):
+-- it is encrypted all through, so the first encrypted file shows it.
+local function locked(z)
+  for _, name in ipairs(z:list()) do
+    local info = z:info(name)
+    if info and info.encrypted then
+      local _, why = z:read(name)
+      if why and why:find("password", 1, true) then return why end
+      return nil
+    end
+  end
+end
+
+-- decode reads the bytes of a .zms file into a workbook. When it is
+-- encrypted and the password is missing or wrong it gives nil, why and
+-- "locked".
+function M.decode(data, password)
+  local z, err = zip.load(data, { password = password })
   if not z then return nil, "not a workbook: " .. tostring(err) end
+  local why = locked(z)
+  if why then return nil, why, "locked" end
   local text = z:read(M.MANIFEST)
   if not text then return nil, "not a workbook: it has no " .. M.MANIFEST end
   local manifest, jerr = json.decode(text)
@@ -207,7 +226,7 @@ end
 
 -- load opens a workbook, or a CSV file as one. It returns the workbook
 -- and, for a CSV file, the separator it uses.
-function M.load(path)
+function M.load(path, password)
   local data, err = readFile(path)
   if not data then return nil, err end
   if M.isCSV(path) and data:sub(1, 2) ~= "PK" then
@@ -215,7 +234,7 @@ function M.load(path)
     local sep = M.extension(path) == "tsv" and "\t" or nil
     return M.importCSV(data, name, sep)
   end
-  return M.decode(data)
+  return M.decode(data, password)
 end
 
 ---------------------------------------------------------------- exporting

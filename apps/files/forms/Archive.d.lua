@@ -1,0 +1,13 @@
+---@meta
+-- What Archive.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.Archive: gui.Form
+---@field cmdAll gui.Button
+---@field cmdClose gui.Button
+---@field cmdFolder gui.Button
+---@field cmdSelected gui.Button
+---@field lblInfo gui.Label
+---@field lblStatus gui.Label
+---@field lstEntries gui.ListBox
+---@field prgJob gui.ProgressBar

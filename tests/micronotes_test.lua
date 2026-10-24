@@ -374,6 +374,38 @@ test("form: a table is made in the note and changed from the Table menu", functi
   eq(#t.rows, 2) eq(#t.align, 2)
 end)
 
+test("form: an encrypted notebook needs its password, and keeps it", function()
+  local gui = require "gui"
+  local realBox = gui.passwordbox
+  fresh()
+  local file = os.tmpname()
+  gui.passwordbox = function() return "pw" end
+  frm.actions.mnuPassword()
+  ok(frm.caption:find("(encrypted)", 1, true), frm.caption)
+  ok(frm.saveTo(file), "saved")
+  local f = io.open(file, "rb") local raw = f:read("*a") f:close()
+  ok(not raw:find("This is a notebook", 1, true), "no note is readable in it")
+  local nb, why, locked = notebook.load(file)
+  eq(nb, nil) eq(locked, "locked") ok(why:find("password"), why)
+  eq(select(3, notebook.load(file, "bad")), "locked")
+  local answers, asked = { "bad", "pw" }, 0
+  gui.passwordbox = function() asked = asked + 1 return answers[asked] end
+  fresh()
+  ok(frm.openPath(file), "opened")
+  eq(asked, 2)
+  eq(select(2, frm.notebook()), "Welcome.md")
+  -- It is saved with the password again, by the form and by the notebook.
+  ok(frm.saveTo(file))
+  eq(select(3, notebook.load(file)), "locked")
+  ok(notebook.load(file, "pw") ~= nil)
+  gui.passwordbox = function() return "" end
+  frm.actions.mnuPassword()
+  ok(frm.saveTo(file))
+  ok(notebook.load(file) ~= nil, "readable without one")
+  gui.passwordbox = realBox
+  os.remove(file)
+end)
+
 test("form: links to headings stay in the note", function()
   fresh()
   frm.open("Ideas.md")
