@@ -12,6 +12,8 @@ local lfs = require "lfs"
 local md = require "markdown"
 local notebook = require "notebook"
 local picker = require "forms.LinkPicker"
+local find = require "forms.Find"
+local finder = require "finder"
 
 local frm = gui.load "MicroNotes" --[[@as forms.MicroNotes]]
 local edit, view, source, tree = frm.edNote, frm.vwNote, frm.txtSource, frm.treNotes
@@ -39,6 +41,13 @@ local function updateTitle()
   frm.caption = (nb.dirty and "• " or "") .. bookName() .. (nb.password and " (encrypted)" or "") .. " - micronotes"
 end
 
+-- currentText is the note open as it is now, the view it is in aside.
+local function currentText()
+  if mode == "edit" and editorChanged then return edit:markdown() end
+  if mode == "source" then return source.text end
+  return current and nb.notes[current] or ""
+end
+
 local function updateStatus(note)
   local parts = {}
   if current then
@@ -47,18 +56,47 @@ local function updateStatus(note)
       parts[#parts + 1] = ("%d words, %d characters"):format(words, chars)
     end
     parts[#parts + 1] = current
+    local tags = notebook.tagsOf(currentText())
+    if #tags > 0 then parts[#parts + 1] = "#" .. table.concat(tags, " #") end
   end
   parts[#parts + 1] = (nb.dirty and "not saved" or (path and "saved" or "not saved yet"))
   if note then parts[#parts + 1] = note end
   frm.lblStatus.caption = "  " .. table.concat(parts, "   ·   ")
 end
 
+local results = {} -- the notes the search found, as nb:find gives them
+
+-- showResults lists what the search box asks for over the tree (which is
+-- put away while it is used), each note with a piece of its text, or lets
+-- the tree back when the box is empty.
+local function showResults()
+  local text = frm.txtSearch.text or ""
+  local searching = text:match("%S") ~= nil
+  tree.visible = not searching
+  frm.lstResults.visible = searching
+  if not searching then
+    results = {}
+    return 0
+  end
+  results = nb:find(text)
+  local items = {}
+  for i, r in ipairs(results) do
+    local dir = notebook.dirname(r.path)
+    items[i] = ("%s%s    %s"):format(r.title, dir ~= "" and ("  (" .. dir .. ")") or "", r.snippet)
+  end
+  quiet = true
+  frm.lstResults.items = items
+  frm.lstResults.selected = 0
+  quiet = false
+  return #results
+end
+
 local function updateTree()
   quiet = true
-  local search = frm.txtSearch.text or ""
-  tree.items = nb:items(openFolders, search ~= "" and nb:search(search) or nil)
+  tree.items = nb:items(openFolders)
   if current then tree.path = notebook.treePath(current) end
   quiet = false
+  if (frm.txtSearch.text or ""):match("%S") then showResults() end
 end
 
 local function updateBacklinks()
@@ -112,7 +150,7 @@ local function show()
     editorChanged = false
   elseif mode == "read" then
     view.pictures = nb:pictures(current)
-    view.text = text or "*No note is open: pick one on the left, or make one with Cmd+N.*\n"
+    view.text = text and notebook.linkTags(text) or "*No note is open: pick one on the left, or make one with Cmd+N.*\n"
   else
     source.text = text or ""
   end
@@ -216,6 +254,103 @@ local function setPassword()
   nb.password = pw ~= "" and pw or nil
   changed()
 end
+
+---------------------------------------------------------------- finding in a note
+
+-- Each view finds in its own way: the Edit view through the editor, the
+-- Read view through the view's search (the case of letters aside, and no
+-- replacing), the Source view in the text of its box.
+local editTarget = {
+  canReplace = true,
+  find = function(needle, opts, back)
+    local found, wrapped = edit.ed:find(needle, opts, back)
+    if found then edit:moved() end
+    return found, wrapped
+  end,
+  replace = function(needle, with, opts)
+    local replaced, found = edit.ed:replace(needle, with, opts)
+    if replaced then edit:changed() end
+    if found then edit:moved() end
+    return replaced, found
+  end,
+  replaceAll = function(needle, with, opts)
+    local n = edit.ed:replaceAll(needle, with, opts)
+    if n > 0 then edit:changed() end
+    return n
+  end,
+  count = function(needle, opts) return edit.ed:countMatches(needle, opts) end,
+  selection = function() return edit.ed:copyText() end,
+}
+
+local readTarget = {
+  canReplace = false,
+  find = function(needle, _, back) return view:search(needle, back), false end,
+  count = function(needle) return view:matches(needle) end,
+  selection = function() return view:selectedText() end,
+}
+
+-- selStart is where the source's selection begins (the cursor, when the
+-- selection is nothing, or is before it), counted from 1.
+local function selStart()
+  local sel, cur = source.selectedText, source.cursor
+  if sel ~= "" and cur >= #sel and source.text:sub(cur - #sel + 1, cur) == sel then return cur - #sel + 1 end
+  return cur + 1
+end
+
+local sourceTarget = {
+  canReplace = true,
+  find = function(needle, opts, back)
+    local text = source.text
+    local i, j, wrapped
+    if back then
+      local before = selStart()
+      i, j = finder.findBack(text, needle, before, opts)
+      wrapped = i and j >= before
+    else
+      local from = source.cursor + 1
+      i, j = finder.find(text, needle, from, opts)
+      -- The selection is a match already, with the cursor before it: skip it.
+      if i == from and source.selectedText ~= "" and source.selectedText == text:sub(i, j) then
+        i, j = finder.find(text, needle, i + 1, opts)
+      end
+      wrapped = i and i < from
+    end
+    if not i then return false end
+    source:select(i, j)
+    return true, wrapped
+  end,
+  replace = function(needle, with, opts)
+    local replaced = false
+    if finder.matches(source.selectedText, needle, opts) then
+      source:insert(with)
+      changed()
+      replaced = true
+    end
+    local found = sourceTarget.find(needle, opts, false)
+    return replaced, found
+  end,
+  replaceAll = function(needle, with, opts)
+    local text, n = finder.replaceAll(source.text, needle, with, opts)
+    if n > 0 then
+      local line = source.line
+      source.text = text
+      source.line = line
+      changed()
+    end
+    return n
+  end,
+  count = function(needle, opts)
+    local at = source.selectedText ~= "" and selStart() or nil
+    return finder.count(source.text, needle, opts, at)
+  end,
+  selection = function() return source.selectedText end,
+}
+
+find.attach(function()
+  if mode == "edit" then return editTarget end
+  if mode == "source" then return sourceTarget end
+  return readTarget
+end)
 
 local function confirmDiscard()
   flush()
@@ -358,6 +493,13 @@ end
 -- follow goes where a link leads: a note (made if it is not there yet), a
 -- file of the notebook's, or a web address.
 local function follow(url)
+  -- A #tag is a link to the notes that have it.
+  local tag = url:match("^tag:(.+)$")
+  if tag then
+    frm.txtSearch.text = "#" .. tag
+    frm.txtSearch:fire("onChange")
+    return true
+  end
   -- A link to a heading of the note shown is the view's to go to.
   if url:match("^#") then return false end
   local target = notebook.linkTarget(url)
@@ -693,26 +835,82 @@ function tree:onToggle(treePath, isOpen)
 end
 
 function frm.txtSearch:onChange()
-  updateTree()
+  local n = showResults()
   local search = self.text or ""
-  if search ~= "" then
-    local found = nb:search(search)
-    updateStatus(#found == 0 and "no note has that" or (#found == 1 and "1 note" or (#found .. " notes")))
+  if search:match("%S") then
+    updateStatus(n == 0 and "no note has that" or (n == 1 and "1 note" or (n .. " notes")))
+  else
+    updateStatus()
   end
+end
+
+-- reveal goes to where a note was found: the first place it has what was
+-- looked for, in the view the note is in.
+local function reveal(term)
+  if not term or term == "" then return end
+  if mode == "read" then view:search(term) end
+end
+
+-- openResult opens the note the list has picked, to read, at the place the
+-- search found.
+local function openResult(i)
+  local r = results[i]
+  if not r then return end
+  openFound(r.path)
+  reveal(r.term)
 end
 
 function frm.txtSearch:onKey(key)
   if key == "Enter" then
-    local found = nb:search(self.text or "")
-    if found[1] then openFound(found[1]) end
+    openResult(1)
+    return true
+  end
+  if key == "Down" and #results > 0 then
+    frm.lstResults:focus()
+    frm.lstResults.selected = 1
     return true
   end
   if key == "Escape" then
     self.text = ""
+    showResults()
     updateTree()
     focusView()
     return true
   end
+end
+
+-- The arrows in the list of what was found open each note, to see it; a
+-- double click goes to the note.
+function frm.lstResults:onChange()
+  if quiet then return end
+  openResult(self.selected)
+end
+
+function frm.lstResults:onDoubleClick()
+  focusView()
+end
+
+-- Tags: a menu of them, to pick one to see its notes.
+function frm.cmdTags:onClick()
+  local items = {}
+  for _, t in ipairs(nb:tags()) do
+    local tag = t.tag
+    items[#items + 1] = { ("#%s  (%d)"):format(tag:gsub("&", "&&"):gsub("/", "∕"), t.count), function()
+      frm.txtSearch.text = "#" .. tag
+      frm.txtSearch:fire("onChange")
+      frm.txtSearch:focus()
+    end }
+  end
+  if #items == 0 then
+    items[1] = { "No tags yet: write #tag in a note", enabled = false }
+  else
+    items[#items + 1] = "-"
+    items[#items + 1] = { "Show all notes", function()
+      frm.txtSearch.text = ""
+      frm.txtSearch:fire("onChange")
+    end }
+  end
+  gui.popup(items, frm)
 end
 
 function frm.lstBacklinks:onDoubleClick()
@@ -809,7 +1007,11 @@ local KEYS = [==[
 Notes
   Cmd+N            a new note, in the folder selected
   F2               rename or move the note (type Folder/Name to move it)
-  Cmd+Shift+F      search the notes' names and text
+  Cmd+Shift+F      search the notes' names and text: words, "a phrase",
+                   -leftout and #tag; Down goes to what was found
+  #tag in a note   makes it tagged (the # button lists the tags)
+  Cmd+F            find in the note (Cmd+G next, Cmd+Shift+G before),
+                   Cmd+R replace
   Cmd+E            switch between editing and reading
 
 Writing (the Edit view)
@@ -862,6 +1064,11 @@ local actions = {
   mnuRename = function() rename() end,
   mnuDelete = function() delete() end,
   mnuFind = function() frm.txtSearch:focus() end,
+  mnuTags = function() frm.cmdTags:fire("onClick") end,
+  mnuFindIn = function() find.open(false) end,
+  mnuFindNext = function() find.findNext(false) end,
+  mnuFindPrev = function() find.findNext(true) end,
+  mnuReplace = function() find.open(true) end,
   mnuUndo = function() if mode == "edit" then edit.ed:undo() edit:changed() end end,
   mnuRedo = function() if mode == "edit" then edit.ed:redo() edit:changed() end end,
   mnuCut = function() clip("cut") end,
@@ -950,6 +1157,7 @@ end
 
 function frm:onClose()
   if not confirmDiscard() then return false end
+  if find.visible then find:close() end
 end
 
 edit.textSize, view.textSize = settings.textSize, settings.textSize
@@ -969,6 +1177,8 @@ frm.open = open
 frm.setMode = setMode
 frm.follow = follow
 frm.openFound = openFound
+frm.results = function() return results end
+frm.showResults = showResults
 frm.moveInto = moveInto
 frm.attach = attach
 frm.actions = actions

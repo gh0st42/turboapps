@@ -122,6 +122,62 @@ test("attachments", function()
   eq(names(nb:unused()), "attachments/red dot 1.png")
 end)
 
+test("tags: written in the text or the front matter, not in code or headings", function()
+  local tags = notebook.tagsOf("# Title #notatag\n\nSome words #Cooking and #home/garden, #2024 is not one, #-no.\n"
+    .. "A link [x](a.md#section) and (#anchor) do not count; `#incode` neither.\n\n```\n#fenced\n```\n#last-one\n")
+  eq(table.concat(tags, ","), "cooking,home/garden,last-one")
+  eq(table.concat(notebook.tagsOf("---\ntags: [Alpha, beta]\n---\n\ntext #gamma\n"), ","), "alpha,beta,gamma")
+  eq(table.concat(notebook.tagsOf("---\ntags: one, two\n---\n"), ","), "one,two")
+  eq(table.concat(notebook.tagsOf("---\ntags:\n  - listed\n  - \"quoted\"\ntitle: x\n---\n#after\n"), ","), "after,listed,quoted")
+  eq(#notebook.tagsOf("no tags here\n"), 0)
+  eq(notebook.linkTags("a #tag and `#code` and #Other/Sub.\n"), "a [#tag](tag:tag) and `#code` and [#Other/Sub](tag:other/sub).\n")
+  eq(notebook.linkTags("nothing\n"), "nothing\n")
+  local nb = notebook.new(false)
+  nb:createNote("", "One", "# One\n\n#home/garden #cook\n")
+  nb:createNote("", "Two", "#home and #cook again\n")
+  nb:createNote("Sub", "Three", "untagged\n")
+  local list = nb:tags()
+  local seen = {}
+  for _, t in ipairs(list) do seen[t.tag] = t.count end
+  eq(seen["home"], 2, "a tag inside counts for the one it is in")
+  eq(seen["home/garden"], 1); eq(seen.cook, 2)
+  eq(list[1].tag, "cook"); eq(list[1].count, 2)
+end)
+
+test("find: words, phrases, minus words and tags, the likeliest first, with a snippet", function()
+  local nb = notebook.new(false)
+  nb:createNote("", "Eggs", "# Eggs\n\nBoil the eggs. Eggs are good. #cook\n")
+  nb:createNote("", "Shopping", "milk\n\nbuy eggs and bread\n\n#home\n")
+  nb:createNote("", "Bread", "Knead the dough for bread.\n\n#cook #home\n")
+  nb:createNote("", "Notes", "Nothing about food.\n")
+  local function paths(q) local out = {} for i, r in ipairs(nb:find(q)) do out[i] = r.title end return table.concat(out, ",") end
+  eq(paths("eggs"), "Eggs,Shopping", "the title and the heading first")
+  eq(paths("EGGS bread"), "Shopping")
+  eq(paths("bread"), "Bread,Shopping")
+  eq(paths('"buy eggs"'), "Shopping")
+  eq(paths("bread -eggs"), "Bread")
+  eq(paths("#cook"), "Bread,Eggs")
+  eq(paths("tag:home"), "Bread,Shopping")
+  eq(paths("bread #home"), "Bread,Shopping")
+  eq(paths("#cook #home"), "Bread")
+  eq(paths("zebra"), "")
+  eq(paths(""), "")
+  eq(paths("   "), "")
+  local r = nb:find("dough")[1]
+  eq(r.path, "Bread.md"); eq(r.count, 1); eq(r.term, "dough")
+  eq(r.snippet, "Knead the dough for bread. #cook #home")
+  ok(not nb:find("eggs")[1].snippet:find("# Eggs", 1, true), "the # of a heading is left out")
+  r = nb:find("eggs")[1]
+  eq(r.title, "Eggs"); ok(r.score > nb:find("eggs")[2].score)
+  ok(r.snippet:find("eggs", 1, true), r.snippet)
+  r = nb:find("#home")[1]
+  ok(r.snippet ~= "", "a tag search shows the first words")
+  local long = notebook.new(false)
+  long:createNote("", "Long", ("word "):rep(40) .. "needle " .. ("more "):rep(40) .. "\n")
+  local sn = long:find("needle")[1].snippet
+  ok(sn:find("^…") and sn:find("…$") and sn:find("needle", 1, true) and #sn < 120, sn)
+end)
+
 test("search", function()
   local nb = notebook.new(false)
   nb:createNote("", "Shopping", "milk, eggs\n")
@@ -306,6 +362,61 @@ test("form: a note found by searching opens to read", function()
   frm.setMode("edit")
 end)
 
+test("form: searching lists the notes with what they say, and tags are links", function()
+  local gui = require "gui"
+  local nb = fresh()
+  nb:createNote("", "Pasta", "# Pasta\n\nBoil water for the pasta. #zzcook #dinner\n")
+  nb:createNote("", "Soup", "Chop onions. #zzcook\n")
+  frm.showResults()
+  eq(frm.lstResults.visible, false); eq(frm.treNotes.visible, true)
+  frm.txtSearch.text = "#zzcook"
+  frm.txtSearch:fire("onChange")
+  eq(frm.lstResults.visible, true); eq(frm.treNotes.visible, false, "the list takes the tree's place")
+  eq(#frm.lstResults.items, 2)
+  ok(frm.lstResults.items[1]:find("^Pasta"), frm.lstResults.items[1])
+  ok(frm.lstResults.items[1]:find("Boil water", 1, true), "a piece of the text")
+  ok(frm.lblStatus.caption:find("2 notes"), frm.lblStatus.caption)
+  -- Picking one opens it to read, at the place found.
+  frm.lstResults.selected = 2
+  frm.lstResults:fire("onChange")
+  eq(select(2, frm.notebook()), "Soup.md"); eq(select(3, frm.notebook()), "read")
+  eq(frm.vwNote:selectedText(), "#zzcook")
+  ok(frm.lblStatus.caption:find("#zzcook", 1, true), "the note's tags are in the status")
+  -- Words find what a note says, and a search with no match says so.
+  frm.txtSearch.text = "onions"
+  frm.txtSearch:fire("onChange")
+  eq(#frm.lstResults.items, 1)
+  eq(frm.txtSearch:fire("onKey", "Down"), true)
+  frm.txtSearch.text = "qqqnothing"
+  frm.txtSearch:fire("onChange")
+  eq(#frm.lstResults.items, 0)
+  ok(frm.lblStatus.caption:find("no note has that"), frm.lblStatus.caption)
+  -- A #tag in a note being read is a link: following it searches for the tag.
+  frm.txtSearch:fire("onKey", "Escape")
+  eq(frm.lstResults.visible, false); eq(frm.treNotes.visible, true); eq(frm.txtSearch.text, "")
+  ok(frm.vwNote.text:find("[#zzcook](tag:zzcook)", 1, true), frm.vwNote.text)
+  eq(frm.vwNote:fire("onLink", "tag:zzcook"), true)
+  eq(frm.txtSearch.text, "#zzcook"); eq(#frm.lstResults.items, 2)
+  -- The tag menu lists them with their counts, and picking one searches.
+  local menu
+  local realPopup = gui.popup
+  gui.popup = function(items) menu = items end
+  frm.cmdTags:fire("onClick")
+  local entry
+  for _, it in ipairs(menu) do
+    if type(it) == "table" and it[1]:find("#zzcook", 1, true) then entry = it end
+  end
+  ok(entry and entry[1]:find("(2)", 1, true), "the tag and how many notes have it")
+  frm.txtSearch.text = ""
+  frm.txtSearch:fire("onChange")
+  entry[2]()
+  eq(frm.txtSearch.text, "#zzcook")
+  frm.txtSearch.text = ""
+  frm.txtSearch:fire("onChange")
+  gui.popup = realPopup
+  frm.setMode("edit")
+end)
+
 test("form: notes dragged in the tree move into folders", function()
   local nb = fresh()
   local plan = nb:createNote("Work", "Plan", "# Plan\n\nsee [[Ideas]]\n")
@@ -404,6 +515,58 @@ test("form: an encrypted notebook needs its password, and keeps it", function()
   ok(notebook.load(file) ~= nil, "readable without one")
   gui.passwordbox = realBox
   os.remove(file)
+end)
+
+test("finder: finds, counts and replaces in plain text", function()
+  local finder = require "finder"
+  eq(select(1, finder.find("one two one", "one", 2)), 9)
+  eq(select(1, finder.find("one two one", "one", 10)), 1, "round again")
+  eq(finder.find("one two one", "one", 10, { wrap = false }), nil)
+  eq(select(1, finder.find("Cat cat", "cat", 1, { matchCase = true })), 5)
+  eq(select(1, finder.find("category cat", "cat", 1, { whole = true })), 10)
+  eq(select(1, finder.findBack("one two one", "one", 9)), 1)
+  eq(select(1, finder.findBack("one two one", "one", 1)), 9, "round from the end")
+  eq(finder.count("a b a b a", "a"), 3)
+  eq(select(2, finder.count("a b a b a", "a", nil, 5)), 2)
+  ok(finder.matches("Cat", "cat") and not finder.matches("Cat", "cat", { matchCase = true }))
+  ok(not finder.matches("", "cat"))
+  local text, n = finder.replaceAll("aXa Xa", "x", "yy")
+  eq(text, "ayya yya"); eq(n, 2)
+  eq(select(2, finder.replaceAll("aa", "a", "aa")), 2, "a replacement is not searched again")
+end)
+
+test("form: Find and Replace in the note's three views", function()
+  local gui = require "gui"
+  local findForm = require "forms.Find"
+  local realMsg = gui.msgbox
+  gui.msgbox = function() return "ok" end
+  fresh()
+  edit:load("The cat sat. A CAT here.\n\nOne cat more.\n")
+  edit.ed:setCaret { b = 1, o = 0 }
+  findForm.txtFind.text = "cat"
+  findForm.txtReplace.text = "dog"
+  frm.actions.mnuFindNext()
+  eq(edit.ed:copyText(), "cat")
+  ok(findForm.lblResult.caption:find("1 of 3"), findForm.lblResult.caption)
+  findForm.cmdReplace:fire("onClick")
+  ok(edit:markdown():find("The dog sat", 1, true), edit:markdown())
+  findForm.cmdReplaceAll:fire("onClick")
+  eq(edit:markdown(), "The dog sat. A dog here.\n\nOne dog more.\n")
+  -- Read: finding, no replacing.
+  frm.setMode("read")
+  local view = frm.vwNote
+  view.text = "alpha beta alpha\n"
+  findForm.txtFind.text = "ALPHA"
+  frm.actions.mnuFindNext()
+  eq(view:selectedText(), "alpha")
+  ok(findForm.lblResult.caption:find("1 of 2"), findForm.lblResult.caption)
+  frm.actions.mnuFindPrev()
+  ok(findForm.lblResult.caption:find("2 of 2"), findForm.lblResult.caption)
+  findForm.cmdReplaceAll:fire("onClick")
+  ok(findForm.lblResult.caption:find("Edit and Source"), findForm.lblResult.caption)
+  eq(frm.vwNote.text, "alpha beta alpha\n")
+  frm.setMode("edit")
+  gui.msgbox = realMsg
 end)
 
 test("form: links to headings stay in the note", function()

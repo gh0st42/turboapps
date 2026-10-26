@@ -306,6 +306,274 @@ function Notebook:search(text)
   return byTitle
 end
 
+---------------------------------------------------------------- tags
+
+-- A note's tags are the words written as #tag in its text (not in code, not
+-- in a heading, whose # has a space after it, not in a link's address, which
+-- a ( or other letter comes before), and
+-- those listed in the front matter at its top:
+--
+--   ---
+--   tags: [cooking, home/garden]       or   tags: cooking, home
+--   ---                                or   a list, a "- tag" line each
+--
+-- A tag has a letter in it and may have / in it for a tag inside a tag
+-- (#home/garden is also found by #home). Tags are kept in lower case.
+
+-- blank puts spaces over what is code, a fenced block or between backticks,
+-- keeping every other character where it is.
+local function blank(text)
+  local out, fence = {}, false
+  for line in (text .. "\n"):gmatch("(.-)\n") do
+    if line:match("^%s*```") or line:match("^%s*~~~") then
+      fence = not fence
+      out[#out + 1] = (line:gsub(".", " "))
+    elseif fence then
+      out[#out + 1] = (line:gsub(".", " "))
+    else
+      out[#out + 1] = (line:gsub("`[^`]*`", function(c) return (c:gsub(".", " ")) end))
+    end
+  end
+  return table.concat(out, "\n"):sub(1, #text)
+end
+
+-- cleanTag makes what follows a # into a tag, or nil when it is not one.
+local function cleanTag(tag)
+  tag = tag:gsub("[/%-_]+$", ""):lower()
+  if tag == "" or not tag:find("%a") and not tag:find("[\128-\255]") then return nil end
+  return tag
+end
+
+local TAGCHARS = "[%w_\128-\255][%w_/%-\128-\255]*"
+
+-- frontTags reads the tags of the front matter, and says how many bytes of
+-- the text it takes up.
+local function frontTags(text)
+  local body, rest = text:match("^%-%-%-[ \t]*\r?\n(.-)\r?\n%-%-%-[ \t]*()\r?\n")
+  if not body then body, rest = text:match("^%-%-%-[ \t]*\r?\n(.-)\r?\n%-%-%-[ \t]*()$") end
+  if not body then return {}, 0 end
+  local tags = {}
+  local function add(t)
+    t = cleanTag((t:gsub("^#", ""):gsub("^[\"']", ""):gsub("[\"']$", "")))
+    if t then tags[#tags + 1] = t end
+  end
+  local listing = false
+  for line in (body .. "\n"):gmatch("(.-)\r?\n") do
+    local value = line:match("^[Tt]ags?%s*:%s*(.*)$")
+    if value then
+      listing = value == ""
+      value = value:gsub("^%[", ""):gsub("%]%s*$", "")
+      for item in value:gmatch("[^,]+") do add(item:match("^%s*(.-)%s*$")) end
+    elseif listing then
+      local item = line:match("^%s*%-%s*(.-)%s*$")
+      if item then add(item) else listing = false end
+    end
+  end
+  return tags, rest - 1
+end
+
+-- eachTag calls fn(first, last, tag) for the #tags in text (the front matter
+-- not among them).
+local function eachTag(text, fn)
+  local _, skip = frontTags(text)
+  local clean = blank(text)
+  local at = 1
+  for line in (clean .. "\n"):gmatch("(.-)\n") do
+    if at > skip and not line:match("^%s*#+%s") then
+      local from = 1
+      while true do
+        local i, j = line:find("#" .. TAGCHARS, from)
+        if not i then break end
+        local before = i > 1 and line:sub(i - 1, i - 1) or " "
+        local tag = cleanTag(line:sub(i + 1, j))
+        if tag and before:match("%s") then
+          -- Trailing - and / are not part of it.
+          local used = #line:sub(i + 1, j):gsub("[/%-_]+$", "")
+          fn(at + i - 1, at + i + used - 1, tag)
+        end
+        from = j + 1
+      end
+    end
+    at = at + #line + 1
+  end
+end
+
+-- tagsOf lists a text's tags, each once, sorted.
+function M.tagsOf(text)
+  local seen, list = {}, {}
+  local function add(t)
+    if not seen[t] then seen[t] = true list[#list + 1] = t end
+  end
+  for _, t in ipairs((frontTags(text))) do add(t) end
+  eachTag(text, function(_, _, t) add(t) end)
+  table.sort(list)
+  return list
+end
+
+-- linkTags writes #tags as links to "tag:name", for a view to make clickable.
+function M.linkTags(text)
+  local marks = {}
+  eachTag(text, function(i, j, tag) marks[#marks + 1] = { i, j, tag } end)
+  if #marks == 0 then return text end
+  local out, at = {}, 1
+  for _, m in ipairs(marks) do
+    out[#out + 1] = text:sub(at, m[1] - 1)
+    out[#out + 1] = ("[%s](tag:%s)"):format(text:sub(m[1], m[2]), m[3])
+    at = m[2] + 1
+  end
+  out[#out + 1] = text:sub(at)
+  return table.concat(out)
+end
+
+-- hasTag says whether a list of tags has tag, or one inside it (a tag of
+-- "home/garden" is a "home" one).
+local function hasTag(list, tag)
+  for _, t in ipairs(list) do
+    if t == tag or t:sub(1, #tag + 1) == tag .. "/" then return true end
+  end
+  return false
+end
+
+-- tags lists the tags of the notebook as { tag =, count =, notes = {paths} },
+-- sorted by name; a tag inside another counts for it too.
+function Notebook:tags()
+  local by, order = {}, {}
+  for _, p in ipairs(self:notePaths()) do
+    for _, t in ipairs(M.tagsOf(self.notes[p])) do
+      -- home/garden is under home as well.
+      local name = t
+      while name do
+        local e = by[name]
+        if not e then e = { tag = name, count = 0, notes = {} } by[name] = e order[#order + 1] = e end
+        if e.notes[#e.notes] ~= p then
+          e.notes[#e.notes + 1] = p
+          e.count = e.count + 1
+        end
+        name = name:match("^(.*)/[^/]*$")
+      end
+    end
+  end
+  table.sort(order, function(a, b) return a.tag < b.tag end)
+  return order
+end
+
+---------------------------------------------------------------- searching
+
+-- parseQuery splits what was typed to look for: words, "phrases in quotes",
+-- -words that must not be there, and #tags (or tag:name).
+local function parseQuery(query)
+  local q = { words = {}, phrases = {}, minus = {}, tags = {} }
+  local i = 1
+  while i <= #query do
+    local rest = query:sub(i)
+    local space = rest:match("^%s+")
+    if space then
+      i = i + #space
+    elseif rest:sub(1, 1) == '"' then
+      local close = rest:find('"', 2, true)
+      local phrase = rest:sub(2, (close or #rest + 1) - 1)
+      if phrase ~= "" then q.phrases[#q.phrases + 1] = phrase:lower() end
+      i = i + (close or #rest)
+    else
+      local word = rest:match("^%S+")
+      i = i + #word
+      local tag = word:match("^#(.+)$") or word:match("^[Tt]ag:(.+)$")
+      if tag then
+        tag = cleanTag(tag)
+        if tag then q.tags[#q.tags + 1] = tag end
+      elseif word:sub(1, 1) == "-" and #word > 1 then
+        q.minus[#q.minus + 1] = word:sub(2):lower()
+      else
+        q.words[#q.words + 1] = word:lower()
+      end
+    end
+  end
+  return q
+end
+
+local function countIn(hay, needle)
+  local n, from = 0, 1
+  while true do
+    local i = hay:find(needle, from, true)
+    if not i then return n end
+    n, from = n + 1, i + 1
+  end
+end
+
+-- snippet is a short piece of text round the first place at, one line.
+local function snippet(text, at, len)
+  local from = math.max(1, at - 30)
+  local to = math.min(#text, at + len + 50)
+  -- Whole UTF-8 characters.
+  while from > 1 and text:byte(from) and text:byte(from) >= 128 and text:byte(from) < 192 do from = from - 1 end
+  while to < #text and text:byte(to + 1) and text:byte(to + 1) >= 128 and text:byte(to + 1) < 192 do to = to + 1 end
+  -- A heading's #s are not shown.
+  local piece = text:sub(from, to):gsub("^#+%s+", ""):gsub("\n#+%s+", "\n"):gsub("%s+", " "):gsub("^ ", ""):gsub(" $", "")
+  return (from > 1 and "…" or "") .. piece .. (to < #text and "…" or "")
+end
+
+-- find looks in every note for what a person typed: all the words and
+-- "phrases" (the case of letters aside) in its title or text, none of the
+-- -words, and each #tag (or tag:name). It lists the notes that qualify, the
+-- likeliest first (the title has them, a heading has them, they come often),
+-- each as { path =, title =, score =, count =, snippet =, term = the first
+-- thing looked for }.
+function Notebook:find(query)
+  local q = parseQuery(query)
+  local terms = {}
+  for _, w in ipairs(q.words) do terms[#terms + 1] = w end
+  for _, p in ipairs(q.phrases) do terms[#terms + 1] = p end
+  if #terms == 0 and #q.tags == 0 then return {} end
+  local out = {}
+  for _, path in ipairs(self:notePaths()) do
+    local text = self.notes[path]
+    local lower, title = text:lower(), M.title(path):lower()
+    local ok = true
+    for _, t in ipairs(terms) do
+      if not (title:find(t, 1, true) or lower:find(t, 1, true)) then ok = false break end
+    end
+    if ok then
+      for _, t in ipairs(q.minus) do
+        if title:find(t, 1, true) or lower:find(t, 1, true) then ok = false break end
+      end
+    end
+    if ok and #q.tags > 0 then
+      local mine = M.tagsOf(text)
+      for _, t in ipairs(q.tags) do
+        if not hasTag(mine, t) then ok = false break end
+      end
+    end
+    if ok then
+      local score, count, first = 0, 0, nil
+      for _, t in ipairs(terms) do
+        if title:find(t, 1, true) then score = score + 10 end
+        for heading in lower:gmatch("\n#+ ([^\n]*)") do
+          if heading:find(t, 1, true) then score = score + 4 end
+        end
+        local n = countIn(lower, t)
+        count = count + n
+        score = score + math.min(n, 10)
+        local at = lower:find(t, 1, true)
+        if at and (not first or at < first.at) then first = { at = at, len = #t } end
+      end
+      local body = first and snippet(text, first.at, first.len)
+      if not body then
+        -- Only tags asked for: the first line of words.
+        for line in text:gmatch("[^\n]+") do
+          if not line:match("^%s*#+%s") and not line:match("^%-%-%-") and line:match("%S") then body = snippet(line, 1, 0) break end
+        end
+      end
+      out[#out + 1] = { path = path, title = M.title(path), score = score, count = count,
+        snippet = body or "", term = terms[1] or ("#" .. q.tags[1]) }
+    end
+  end
+  table.sort(out, function(a, b)
+    if a.score ~= b.score then return a.score > b.score end
+    return a.title:lower() < b.title:lower()
+  end)
+  return out
+end
+
 local function escapePattern(s) return (s:gsub("%p", "%%%0")) end
 
 -- relink points the links in every note from one note's name to another's.

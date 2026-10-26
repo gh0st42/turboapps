@@ -1,0 +1,16 @@
+-- A layout, written by gui.save: gui.load builds it.
+return { kind = "Form", name = "Find", caption = "Find and Replace", width = 420, height = 200,
+  { kind = "Label", name = "lblFind", caption = "Find what:", left = 12, top = 12, width = 90 },
+  { kind = "TextBox", name = "txtFind", left = 104, top = 12, width = 200, tabIndex = 1 },
+  { kind = "Label", name = "lblReplace", caption = "Replace with:", left = 12, top = 44, width = 90 },
+  { kind = "TextBox", name = "txtReplace", left = 104, top = 44, width = 200, tabIndex = 2 },
+  { kind = "CheckBox", name = "chkCase", caption = "Match case", left = 12, top = 84, width = 140, tabIndex = 3 },
+  { kind = "CheckBox", name = "chkWhole", caption = "Whole words", left = 12, top = 112, width = 140, tabIndex = 4 },
+  { kind = "CheckBox", name = "chkWrap", caption = "Wrap around", left = 12, top = 140, width = 140, checked = true, tabIndex = 5 },
+  { kind = "Label", name = "lblResult", caption = "", left = 12, top = 168, width = 292, textColor = "#707070" },
+  { kind = "Button", name = "cmdFindNext", caption = "Find Next", left = 316, top = 12, width = 92, default = true, tabIndex = 6 },
+  { kind = "Button", name = "cmdFindPrev", caption = "Find Previous", left = 316, top = 44, width = 92, tabIndex = 7 },
+  { kind = "Button", name = "cmdReplace", caption = "Replace", left = 316, top = 76, width = 92, tabIndex = 8 },
+  { kind = "Button", name = "cmdReplaceAll", caption = "Replace All", left = 316, top = 108, width = 92, tabIndex = 9 },
+  { kind = "Button", name = "cmdClose", caption = "Close", left = 316, top = 140, width = 92, tabIndex = 10 },
+}

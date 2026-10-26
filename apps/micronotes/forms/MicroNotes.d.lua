@@ -9,11 +9,13 @@
 ---@field cmdNewNote gui.Button
 ---@field cmdRead gui.Button
 ---@field cmdSource gui.Button
+---@field cmdTags gui.Button
 ---@field edNote gui.MarkdownEdit
 ---@field lblBacklinks gui.Label
 ---@field lblStatus gui.Label
 ---@field lblTitle gui.Label
 ---@field lstBacklinks gui.ListBox
+---@field lstResults gui.ListBox
 ---@field pnlHeader gui.Panel
 ---@field treNotes gui.Tree
 ---@field txtSearch gui.TextBox
