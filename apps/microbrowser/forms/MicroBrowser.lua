@@ -12,6 +12,7 @@ local store = require "store"
 local png = require "png"
 local look = require "look"
 local bookmarksForm = require "forms.Bookmarks"
+local historyForm = require "forms.History"
 
 local frm = gui.load "MicroBrowser" --[[@as forms.MicroBrowser]]
 local view, address, bar = frm.vwPage, frm.txtAddress, frm.tabBar
@@ -30,6 +31,8 @@ local hovered     -- the link under the mouse
 local lastFind = ""
 
 local updateMenu -- below: the menus as things are
+local countFound -- below: the count in the find bar
+local find       -- below: opens the find bar
 
 local HOME = "about:home"
 local HELP = "about:help"
@@ -78,6 +81,9 @@ local outline = {}  -- the headings it lists, as the view gives them
 -- layoutOutline puts the sidebar beside the page, or takes it away and gives
 -- the page the room. It is done again when the window changes size, so
 -- that the sidebar keeps its width.
+local FINDBAR = 34 -- how high the find bar is, which the page gives room to
+local findOn = false
+
 local function layoutOutline()
   local list, w = frm.lstOutline, frm.width
   list.visible = settings.outline
@@ -88,6 +94,17 @@ local function layoutOutline()
   else
     view.left, view.width = 0, w
   end
+end
+
+-- showFind puts the find bar above the page, or takes it away; the page
+-- takes the room, and the outline's list goes with it.
+local function showFind(on)
+  if on == findOn then return end
+  findOn = on
+  frm.pnlFind.visible = on
+  local by = on and FINDBAR or -FINDBAR
+  view.top, view.height = view.top + by, view.height - by
+  layoutOutline()
 end
 
 -- refreshOutline lists the headings of the page shown, indented by their
@@ -132,6 +149,7 @@ local function render()
     view.text = e.text or ""
   end
   refreshOutline()
+  if countFound and findOn then countFound() end
   address.text = t.job and t.target or e.url or ""
   frm.caption = (e.title and e.title ~= "" and e.title .. " — " or "") .. "microbrowser"
   updateTabs()
@@ -152,6 +170,12 @@ local function settle(t, entry, push)
     t.future = {}
   end
   t.entry = entry
+  -- A page that came is remembered, not one that could not be had.
+  if entry.url and entry.body then
+    store.visit(settings, entry.url, entry.title)
+    store.save(settings)
+    if updateMenu then updateMenu() end
+  end
   refresh(t)
 end
 
@@ -507,7 +531,7 @@ updateMenu = function()
   local on = checks()
   local items = {}
   for i, top in ipairs(baseMenu) do
-    if type(top) == "table" and type(top[2]) == "table" and top[1] ~= "&Bookmarks" then
+    if type(top) == "table" and type(top[2]) == "table" and top[1] ~= "&Bookmarks" and top[1] ~= "&History" then
       local sub = {}
       for j, it in ipairs(top[2]) do
         if type(it) == "table" and it.name and on[it.name] ~= nil then
@@ -528,6 +552,18 @@ updateMenu = function()
         -- A / would make a submenu, and & marks a letter.
         local caption = b.title:gsub("&", "&&"):gsub("/", "∕")
         local url = b.url
+        sub[#sub + 1] = { caption, function() open(url) end }
+      end
+      items[i] = { top[1], sub }
+    elseif type(top) == "table" and top[1] == "&History" then
+      local sub = {}
+      for j, it in ipairs(top[2]) do sub[j] = it end
+      local recent = store.recent(settings, nil, 15)
+      if #recent > 0 then sub[#sub + 1] = "-" end
+      for _, h in ipairs(recent) do
+        local caption = h.title:gsub("&", "&&"):gsub("/", "∕")
+        if #caption > 50 then caption = caption:sub(1, 49):gsub("[\192-\255][\128-\191]*$", "") .. "…" end
+        local url = h.url
         sub[#sub + 1] = { caption, function() open(url) end }
       end
       items[i] = { top[1], sub }
@@ -565,6 +601,23 @@ local function bookmark()
   updateMenu()
 end
 
+-- showHistory lists the pages seen, to open one, here or in a new tab.
+local function showHistory()
+  local url, inNew = historyForm.browse(settings)
+  store.save(settings)
+  updateMenu()
+  if url then
+    if inNew then newTab(url) else open(url) end
+  end
+end
+
+local function clearHistory()
+  if gui.msgbox("Forget every page visited?", "yesno", "Clear History") ~= "yes" then return end
+  store.clearHistory(settings)
+  store.save(settings)
+  updateMenu()
+end
+
 local function manageBookmarks()
   local url = bookmarksForm.manage(settings)
   store.save(settings)
@@ -596,15 +649,67 @@ function frm.save(d)
   status(("Saved %s (%.1f KB)"):format(path, #d.body / 1024))
 end
 
-local function find(again)
-  local words = lastFind
-  if not again or words == "" then
-    words = gui.inputbox("Find in this page:", "Find", lastFind)
-    if not words or words == "" then return end
+-- countFound says how many times what is in the find box is on the page.
+countFound = function()
+  local words = frm.txtFind.text
+  if words == "" then
+    frm.lblFound.caption = ""
+    return
+  end
+  local n, which = view:matches(words)
+  frm.lblFound.caption = n == 0 and "not found" or (which > 0 and ("%d of %d"):format(which, n) or ("%d found"):format(n))
+end
+
+-- findNext goes to the next match of what is in the find box (the one
+-- before, with back); with the bar away, of what was last looked for.
+local function findNext(back)
+  local words = findOn and frm.txtFind.text or lastFind
+  if words == "" then words = lastFind end
+  if words == "" then
+    find()
+    return false
   end
   lastFind = words
-  if not view:search(words) then status("“" .. words .. "” is not on this page") end
+  local found = view:search(words, back)
+  if findOn then
+    countFound()
+  elseif found then
+    local n, which = view:matches(words)
+    status(("“%s”: %d of %d"):format(words, which, n))
+  end
+  if not found then status("“" .. words .. "” is not on this page") end
+  return found
 end
+
+-- find opens the find bar, with what is selected in it when that is a line.
+find = function()
+  local sel = view:selectedText()
+  showFind(true)
+  if sel ~= "" and not sel:find("\n") then frm.txtFind.text = sel end
+  frm.txtFind:focus()
+  countFound()
+end
+
+local function closeFind()
+  showFind(false)
+  view:focus()
+end
+
+function frm.txtFind:onChange()
+  lastFind = self.text ~= "" and self.text or lastFind
+  countFound()
+end
+
+function frm.txtFind:onKey(key)
+  if key == "Enter" then findNext(false) return true end
+  if key == "Shift+Enter" then findNext(true) return true end
+  if key == "Escape" then closeFind() return true end
+  return false
+end
+
+function frm.cmdFindNext:onClick() findNext(false) end
+function frm.cmdFindPrev:onClick() findNext(true) end
+function frm.cmdFindClose:onClick() closeFind() end
 
 ---------------------------------------------------------------- the controls
 
@@ -722,8 +827,11 @@ local actions = {
   mnuExit = function() frm:close() end,
   mnuCopy = function() view:copy() end,
   mnuSelectAll = function() view:selectAll() end,
-  mnuFind = function() find(false) end,
-  mnuFindNext = function() find(true) end,
+  mnuFind = find,
+  mnuFindNext = function() findNext(false) end,
+  mnuFindPrev = function() findNext(true) end,
+  mnuHistory = function() showHistory() end,
+  mnuClearHistory = function() clearHistory() end,
   mnuReload = reload,
   mnuStop = stop,
   mnuSource = toggleSource,

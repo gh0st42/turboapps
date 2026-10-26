@@ -1,6 +1,6 @@
 -- What microbrowser keeps between runs, with no GUI in it: the bookmarks,
 -- the certificate each Gemini capsule showed first, the tabs that were
--- open, the size of the text, and whether pages are in a fixed font and
+-- open, the pages visited, the size of the text, and whether pages are in a fixed font and
 -- a terminal's colours. It is a Lua file in the user's config
 -- folder, read back with nothing in its environment.
 
@@ -20,7 +20,7 @@ local DEFAULTS = { textSize = 15, home = "about:home", mono = false, terminal = 
 
 -- load reads the settings, filling in what they do not have.
 function M.load()
-  local s = { bookmarks = {}, known = {}, tabs = {} }
+  local s = { bookmarks = {}, known = {}, tabs = {}, history = {} }
   for k, v in pairs(DEFAULTS) do s[k] = v end
   local fn = loadfile(M.path())
   if fn then
@@ -43,6 +43,14 @@ function M.load()
   local tabs = {}
   for _, t in ipairs(s.tabs) do if type(t) == "string" then tabs[#tabs + 1] = t end end
   s.tabs = tabs
+  local seen = {}
+  for _, h in ipairs(s.history) do
+    if type(h) == "table" and type(h.url) == "string" then
+      seen[#seen + 1] = { url = h.url, title = type(h.title) == "string" and h.title or h.url,
+        time = type(h.time) == "number" and h.time or 0, count = type(h.count) == "number" and h.count or 1 }
+    end
+  end
+  s.history = seen
   return s
 end
 
@@ -87,7 +95,7 @@ function M.save(s)
   end
   local out = { "-- microbrowser's settings, written by it.\nreturn " }
   write({ textSize = s.textSize, home = s.home, mono = s.mono, terminal = s.terminal, outline = s.outline,
-    bookmarks = s.bookmarks, known = s.known, tabs = s.tabs }, "", out)
+    bookmarks = s.bookmarks, known = s.known, tabs = s.tabs, history = s.history }, "", out)
   out[#out + 1] = "\n"
   local f = io.open(path, "w")
   if not f then return false end
@@ -127,6 +135,56 @@ function M.move(s, i, by)
   if not list[i] or not list[j] then return i end
   list[i], list[j] = list[j], list[i]
   return j
+end
+
+---------------------------------------------------------------- history
+
+-- HISTORY_MAX is how many pages are remembered: the oldest go first.
+M.HISTORY_MAX = 1000
+
+-- visit notes that a page was seen at time (os.time() when not given): it
+-- goes to the end, the newest, with how many times it has been seen.
+function M.visit(s, url, title, time)
+  local count = 1
+  for i, h in ipairs(s.history) do
+    if h.url == url then
+      count = h.count + 1
+      table.remove(s.history, i)
+      break
+    end
+  end
+  s.history[#s.history + 1] = { url = url, title = title or url, time = time or os.time(), count = count }
+  while #s.history > M.HISTORY_MAX do table.remove(s.history, 1) end
+end
+
+-- recent lists the pages seen, the newest first; with text, only those
+-- whose title or address has it (the case of letters aside), or n at most.
+function M.recent(s, text, n)
+  local want = text and text ~= "" and text:lower() or nil
+  local out = {}
+  for i = #s.history, 1, -1 do
+    local h = s.history[i]
+    if not want or h.title:lower():find(want, 1, true) or h.url:lower():find(want, 1, true) then
+      out[#out + 1] = h
+      if n and #out >= n then break end
+    end
+  end
+  return out
+end
+
+-- forget takes a page out of the history.
+function M.forget(s, url)
+  for i, h in ipairs(s.history) do
+    if h.url == url then
+      table.remove(s.history, i)
+      return true
+    end
+  end
+  return false
+end
+
+function M.clearHistory(s)
+  s.history = {}
 end
 
 ---------------------------------------------------------------- certificates

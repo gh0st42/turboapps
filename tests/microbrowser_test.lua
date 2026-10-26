@@ -584,4 +584,117 @@ test("form: the outline lists a page's headings, and picking one goes to it", fu
   frm.toggleOutline()
 end)
 
+test("history: pages seen are remembered, the newest first, and kept", function()
+  local s = store.load()
+  s.history = {}
+  store.visit(s, "gemini://a/", "Alpha", 100)
+  store.visit(s, "gemini://b/", "Beta", 200)
+  store.visit(s, "gemini://a/", "Alpha again", 300)
+  eq(#s.history, 2)
+  local list = store.recent(s)
+  eq(list[1].url, "gemini://a/"); eq(list[1].count, 2); eq(list[1].title, "Alpha again")
+  eq(list[2].url, "gemini://b/")
+  eq(#store.recent(s, nil, 1), 1)
+  eq(#store.recent(s, "BETA"), 1, "the case aside")
+  eq(store.recent(s, "gemini://b")[1].title, "Beta", "by address too")
+  eq(#store.recent(s, "nothing"), 0)
+  ok(store.save(s))
+  local again = store.load()
+  eq(#again.history, 2); eq(again.history[2].time, 300); eq(again.history[2].count, 2)
+  -- Broken entries do not come through, and the oldest go past the limit.
+  eq(store.forget(again, "gemini://b/"), true)
+  eq(store.forget(again, "gemini://nope/"), false)
+  eq(#again.history, 1)
+  for i = 1, store.HISTORY_MAX + 5 do store.visit(again, "gemini://x/" .. i, "x", i) end
+  eq(#again.history, store.HISTORY_MAX)
+  eq(again.history[1].url, "gemini://x/6")
+  store.clearHistory(again)
+  eq(#again.history, 0)
+  os.remove(store.file)
+end)
+
+test("form: pages are put in the history, and open from it", function()
+  local historyForm = require "forms.History"
+  local s = frm.settings()
+  s.history = {}
+  go(H .. "/")
+  local title = current().entry.title
+  eq(#s.history, 1); eq(s.history[1].url, H .. "/"); eq(s.history[1].title, title)
+  frm.open("about:home")
+  eq(#s.history, 1, "its own pages are not kept")
+  go(H .. "/")
+  eq(s.history[1].count, 2)
+  ok(dofile(store.file).history[1], "kept in the file")
+  -- The menu lists the latest.
+  local menu
+  for _, top in ipairs(frm.Menu1.items) do if top[1] == "&History" then menu = top[2] end end
+  eq(menu[#menu][1], title)
+  -- The window lists them, narrowed by what is typed.
+  historyForm.prepare(s)
+  eq(#historyForm.lstHistory.items, 1)
+  ok(historyForm.lstHistory.items[1]:find(title, 1, true), historyForm.lstHistory.items[1])
+  historyForm.txtFilter.text = "zzz"
+  historyForm.txtFilter:fire("onChange")
+  eq(#historyForm.lstHistory.items, 0); eq(historyForm.cmdOpen.enabled, false)
+  historyForm.txtFilter.text = ""
+  historyForm.txtFilter:fire("onChange")
+  historyForm.cmdNewTab:fire("onClick")
+  local url, inNew = historyForm.chosen()
+  eq(url, H .. "/"); eq(inNew, true)
+  -- Forgetting, and clearing once asked.
+  historyForm.prepare(s)
+  historyForm.cmdForget:fire("onClick")
+  eq(#s.history, 0)
+  store.visit(s, "gemini://a/", "A")
+  historyForm.prepare(s)
+  answers = { "no" }
+  historyForm.cmdClear:fire("onClick")
+  eq(#s.history, 1)
+  answers = { "yes" }
+  historyForm.cmdClear:fire("onClick")
+  eq(#s.history, 0)
+  answers = { "yes" }
+  store.visit(s, "gemini://a/", "A")
+  frm.Menu1:fire("onClick", "mnuClearHistory", "", nil)
+  eq(#s.history, 0)
+end)
+
+test("form: the find bar finds in the page, forwards and back, and counts", function()
+  frm.open("about:help")
+  loaded()
+  local bar = frm.pnlFind
+  eq(bar.visible, false)
+  local top, height = view.top, view.height
+  frm.Menu1:fire("onClick", "mnuFind", "", nil)
+  eq(bar.visible, true)
+  eq(view.top, top + 34); eq(view.height, height - 34, "the page gives it room")
+  frm.txtFind.text = "TAB"
+  frm.txtFind:fire("onChange")
+  local n = tonumber(frm.lblFound.caption:match("^(%d+) found"))
+  ok(n and n >= 1, frm.lblFound.caption)
+  frm.txtFind:fire("onKey", "Enter")
+  eq(view:selectedText():lower(), "tab")
+  ok(frm.lblFound.caption:find("^1 of " .. n), frm.lblFound.caption)
+  frm.txtFind:fire("onKey", "Enter")
+  ok(frm.lblFound.caption:find("^%d of " .. n) or n == 1, frm.lblFound.caption)
+  frm.txtFind:fire("onKey", "Shift+Enter")
+  ok(frm.lblFound.caption:find(" of " .. n), frm.lblFound.caption)
+  frm.cmdFindNext:fire("onClick")
+  frm.cmdFindPrev:fire("onClick")
+  frm.txtFind.text = "no such words on this page"
+  frm.txtFind:fire("onChange")
+  eq(frm.lblFound.caption, "not found")
+  frm.txtFind:fire("onKey", "Enter")
+  ok(frm.lblStatus.caption:find("is not on this page"), frm.lblStatus.caption)
+  -- Escape puts the bar away; Find Next goes on with what was looked for.
+  frm.txtFind.text = "tab"
+  frm.txtFind:fire("onChange")
+  eq(frm.txtFind:fire("onKey", "Escape"), true)
+  eq(bar.visible, false); eq(view.top, top); eq(view.height, height)
+  frm.Menu1:fire("onClick", "mnuFindNext", "", nil)
+  ok(frm.lblStatus.caption:find("“tab”"), frm.lblStatus.caption)
+  frm.Menu1:fire("onClick", "mnuFindPrev", "", nil)
+  eq(view:selectedText():lower(), "tab")
+end)
+
 t.done("microbrowser")

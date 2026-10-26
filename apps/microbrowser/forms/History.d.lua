@@ -1,0 +1,14 @@
+---@meta
+-- What History.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.History: gui.Form
+---@field cmdClear gui.Button
+---@field cmdClose gui.Button
+---@field cmdForget gui.Button
+---@field cmdNewTab gui.Button
+---@field cmdOpen gui.Button
+---@field lblCount gui.Label
+---@field lblFilter gui.Label
+---@field lstHistory gui.ListBox
+---@field txtFilter gui.TextBox
