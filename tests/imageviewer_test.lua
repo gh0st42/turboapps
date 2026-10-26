@@ -586,6 +586,59 @@ test("form: an animation that plays so many times stops on its last frame", func
   frm:fire("onClose")
 end)
 
+---------------------------------------------------------------- turning
+
+test("form: a picture is turned and flipped as shown, and the next one is as it is", function()
+  local dir = root .. "/turn"
+  assert(lfs.mkdir(dir))
+  -- 4 wide, 2 high: red at the top left, blue at the bottom right.
+  local img = png.new(4, 2, "#ffffff")
+  img:set(0, 0, "#ff0000"); img:set(3, 1, "#0000ff")
+  assert(img:save(dir .. "/a.png"))
+  assert(png.new(2, 2, "#00ff00"):save(dir .. "/b.png"))
+  frm.open(dir)
+  frm.flush()
+  local function corner(x, y)
+    local r, g, b = frm.shown().image:get(x, y)
+    return r == 255 and g == 0 and "red" or (b == 255 and r == 0 and "blue" or "white")
+  end
+  eq(frm.shown().image.width, 4)
+  ok(frm:fire("onKeyPreview", "Cmd+R", "r"), "Cmd R turns it clockwise")
+  eq(frm.shown().image.width, 2); eq(frm.shown().image.height, 4)
+  eq(corner(1, 0), "red", "the top left went to the top right")
+  ok(frm.lblStatus.caption:find("turned"), frm.lblStatus.caption)
+  ok(frm:fire("onKeyPreview", "Cmd+Shift+R", "R"))
+  eq(frm.shown().image.width, 4); eq(corner(0, 0), "red", "back again")
+  ok(frm:fire("onKeyPreview", "Cmd+Shift+H", "H"))
+  eq(corner(3, 0), "red", "flipped left to right")
+  ok(frm:fire("onKeyPreview", "Cmd+Shift+V", "V"))
+  eq(corner(3, 1), "red", "flipped top to bottom as well")
+  eq(frm.view().mode, "fit", "shown fitted again")
+  -- Another picture is as it is in its file, and so is this one when it comes back.
+  list.selected = list.selected + 1
+  list:fire("onChange")
+  frm.flush()
+  eq(frm.shown().image.width, 2)
+  list.selected = list.selected - 1
+  list:fire("onChange")
+  frm.flush()
+  eq(corner(0, 0), "red"); eq(frm.shown().image.width, 4)
+  -- Not on a folder, which has no picture.
+  list.selected = 1
+  list:fire("onChange")
+  frm.flush()
+  eq(frm:fire("onKeyPreview", "Cmd+R", "r"), false, "a folder has no picture to turn")
+  -- An animation turns, every frame of it.
+  frm.open(movies)
+  frm.flush()
+  local frames = frm.shown().frames
+  if frames then
+    local w, h = frames[1].image.width, frames[1].image.height
+    frm.rotate(1)
+    eq(frames[1].image.width, h); eq(frames[#frames].image.height, w)
+  end
+end)
+
 ---------------------------------------------------------------- zip files
 
 -- A folder with a zip file of pictures in folders, an encrypted one, and

@@ -104,6 +104,7 @@ local function updateStatus()
       parts[#parts + 1] = ("%s%d%%"):format(view.mode == "fit" and "fit " or "", viewmod.percent(view, img.width, img.height, c.width, c.height))
     end
     parts[#parts + 1] = folder.formatSize(e.size)
+    if shown and shown.turned then parts[#parts + 1] = "turned" end
     local f = shown and shown.frames
     if f and #f > 1 then
       parts[#parts + 1] = ("frame %d of %d%s"):format(shown.index, #f, shown.paused and ", paused" or "")
@@ -181,6 +182,30 @@ local function showSelected()
   canvas():redraw()
   updateStatus()
   wait()
+end
+
+-- turn changes the picture shown, and every frame of an animation, by op
+-- (a function of an image giving one): rotated or flipped, and shown fitted
+-- again, as its shape may have changed. Picking another picture shows that
+-- one as it is in its file again. False when there is no picture.
+local function turn(op)
+  local f = shown and shown.frames
+  if not (f and shown.image) then return false end
+  for _, frame in ipairs(f) do frame.image = op(frame.image) end
+  shown.image = f[shown.index].image
+  shown.turned = true
+  view = viewmod.new()
+  canvas():redraw()
+  updateStatus()
+  return true
+end
+
+local function rotate(quarters)
+  return turn(function(img) return img:rotate(quarters) end)
+end
+
+local function flip(axis)
+  return turn(function(img) return img:flip(axis) end)
 end
 
 -- pause stops an animation where it is, or sets it going again (from the
@@ -436,6 +461,9 @@ Cmd = and Cmd -    zoom in and out; the wheel does too, round the mouse
 Cmd 0    fit the window    Cmd 1    actual size (so does a double click)
 Shift and the arrows    move a picture bigger than the window; so does dragging
 F11    the whole screen    Cmd O (Ctrl O)    choose a folder to open
+Cmd R    turn the picture clockwise    Cmd Shift R    anticlockwise
+Cmd Shift H    flip it left to right    Cmd Shift V    flip it top to bottom
+               (only as it is shown: the file is not changed)
 Cmd Shift O    open a zip file (or comic book .cbz) as a folder; an
                encrypted one asks for its password
 Cmd Up (Ctrl Up)    up one folder
@@ -492,6 +520,10 @@ function frm:onKeyPreview(key, text)
   if command then
     local c = command:lower()
     if command == "Shift+O" or command == "Shift+o" then chooseArchive() return true end
+    if c == "r" then return rotate(1) end
+    if command == "Shift+R" or command == "Shift+r" then return rotate(-1) end
+    if command == "Shift+H" or command == "Shift+h" then return flip("horizontal") end
+    if command == "Shift+V" or command == "Shift+v" then return flip("vertical") end
     if c == "o" then chooseFolder() return true end
     if command == "Up" then up() return true end
     if c == "=" or c == "+" or command == "Shift+=" or command == "Shift++" then return zoom(1.25) end
@@ -597,5 +629,7 @@ frm.pause = pause
 frm.view = function() return view end
 frm.fullView = function() return fullView end
 frm.setFullView = setFullView
+frm.rotate = rotate
+frm.flip = flip
 
 return frm
