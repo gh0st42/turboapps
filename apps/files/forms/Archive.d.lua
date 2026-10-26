@@ -3,11 +3,15 @@
 -- design each time the form is saved; changing it here changes nothing.
 
 ---@class forms.Archive: gui.Form
+---@field cmdAdd gui.Button
+---@field cmdAddFolder gui.Button
 ---@field cmdAll gui.Button
 ---@field cmdClose gui.Button
+---@field cmdDelete gui.Button
 ---@field cmdFolder gui.Button
+---@field cmdPassword gui.Button
 ---@field cmdSelected gui.Button
 ---@field lblInfo gui.Label
 ---@field lblStatus gui.Label
----@field lstEntries gui.ListBox
+---@field lstEntries gui.Object
 ---@field prgJob gui.ProgressBar

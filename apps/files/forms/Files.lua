@@ -377,6 +377,89 @@ local function stopPaste()
   return true
 end
 
+---------------------------------------------------------------- zip files
+
+-- startJob runs an archive job from a timer as paste does, in the place
+-- paste has (so Escape stops it and nothing is pasted meanwhile); done(job)
+-- says what came of it.
+local function startJob(job, verb, done)
+  if pasting then return end
+  pasting = { job = job }
+  updateEdit()
+  local function finished()
+    if pasting and pasting.timer then pasting.timer:stop() end
+    pasting = nil
+    updateEdit()
+    done(job)
+    if #job.errors > 0 then
+      gui.msgbox(("%s\n\n%s"):format(frm.lblStatus.caption, table.concat(job.errors, "\n")), "ok", "Zip")
+    end
+  end
+  local function progress()
+    local pct = job.total > 0 and math.floor(100 * job.bytes / job.total) or 100
+    frm.lblStatus.caption = ("  %s %s (%d%%)  Escape stops it"):format(verb, job.current or "", pct)
+  end
+  pasting.tick = function()
+    if job:step() then
+      finished()
+      return false
+    end
+    progress()
+    return true
+  end
+  progress()
+  pasting.timer = gui.every(0.02, pasting.tick)
+end
+
+-- askZip asks what to call a new zip file and what to lock it with: its
+-- path, which is not one already there, and a password or nil.
+local function askZip(title, suggestion)
+  local name = gui.inputbox("Name of the zip file:", title, suggestion)
+  if not name then return end
+  name = name:gsub("^%s+", ""):gsub("%s+$", "")
+  if name == "" or name:find("[/\\]") then return end
+  if not name:lower():find("%.zip$") then name = name .. ".zip" end
+  local pw = gui.passwordbox("Password for the zip file (all of it is encrypted).\nLeave it empty for none.", title, true)
+  if not pw then return end
+  return fs.join(dir, fs.uniqueName(dir, name, false)), pw ~= "" and pw or nil
+end
+
+-- makeZip writes a zip file of paths (none: an empty one), and shows it.
+local function makeZip(title, suggestion, paths)
+  local dest, pw = askZip(title, suggestion)
+  if not dest then return end
+  local where = dir
+  local job = fs.compress(paths, dest, pw)
+  startJob(job, "Packing", function(j)
+    if where == dir then
+      show()
+      frm.lstFiles:selectNames { fs.basename(dest) }
+    end
+    if j.cancelled then
+      frm.lblStatus.caption = "  Stopped: no zip file was made"
+    elseif #j.errors > 0 and not j.results[1] then
+      frm.lblStatus.caption = "  The zip file could not be written"
+    else
+      frm.lblStatus.caption = ("  Packed %s into %s%s"):format(things(j.count), fs.basename(dest), pw and " (encrypted)" or "")
+    end
+  end)
+end
+
+-- compress packs what is selected, folders with all in them, into a zip file.
+local function compress()
+  local list = selected()
+  if #list == 0 then return end
+  local paths = {}
+  for i, e in ipairs(list) do paths[i] = e.path end
+  local base = #list == 1 and list[1].name:gsub("%.[^.]*$", "") or fs.basename(dir)
+  makeZip("Compress", base .. ".zip", paths)
+end
+
+-- newZip makes an empty zip file, to add to by dropping files on it.
+local function newZip()
+  makeZip("New Zip File", "New archive.zip", {})
+end
+
 ---------------------------------------------------------------- settings
 
 local function applySettings(new)
@@ -537,6 +620,7 @@ local function folderItems()
   end
   local items = {
     { "New &Folder...", name = "newFolder", newFolder },
+    { "New &Zip File...", name = "newZip", newZip, enabled = pasting == nil },
     { "&Paste", name = "paste", paste, enabled = clip ~= nil and pasting == nil },
     "-",
     { "Show &Hidden Files", name = "hidden", checked = settings.showHidden,
@@ -602,6 +686,8 @@ local function menuFor(i)
   add "-"
   add { "Re&name...", name = "rename", rename, shortcut = "F2", enabled = #selected() == 1 }
   add { "&Delete...", name = "delete", delete, shortcut = "Delete" }
+  add "-"
+  add { "Compress to &Zip...", name = "compress", compress, enabled = pasting == nil }
   add "-"
   add { "Copy &Path", name = "copyPath", function() gui.clipboard(e.path) end }
   add { "Copy Na&me", name = "copyName", function() gui.clipboard(e.name) end }
@@ -779,6 +865,8 @@ frm.paste, frm.setClip, frm.stopPaste = paste, setClip, stopPaste
 frm.clipboard = function() return clip end
 frm.pasting = function() return pasting end
 frm.lookInto = lookInto
+frm.compress = compress
+frm.newZip = newZip
 frm.state = function()
   return { dir = dir, entries = entries, settings = settings, history = history }
 end

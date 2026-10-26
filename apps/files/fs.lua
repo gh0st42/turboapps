@@ -504,7 +504,8 @@ function M.archive(path, password)
   local a = setmetatable({ path = path, password = password, z = z, entries = {}, total = 0, encrypted = false }, Archive)
   for _, name in ipairs(z:list()) do
     local info = z:info(name) or {}
-    a.entries[#a.entries + 1] = { name = name, size = info.size or 0, modified = info.modified, encrypted = info.encrypted }
+    a.entries[#a.entries + 1] = { name = name, size = info.size or 0, modified = info.modified, encrypted = info.encrypted,
+      method = info.method }
     a.total = a.total + (info.size or 0)
     if info.encrypted then a.encrypted = true end
   end
@@ -613,6 +614,162 @@ function Archive:extract(dest, names)
   end)
   if #job.items == 0 then job.finished = true end
   return job
+end
+
+-- collect lists the files in paths as { name =, path =, size =, modified = },
+-- named as they go into an archive: a file by its own name, a folder's by
+-- the folder's name and the way down to them. Links and what cannot be read
+-- are left out; skip is a path (the archive being made) never to collect.
+function M.collect(paths, skip)
+  local out = {}
+  skip = skip and M.normalize(skip)
+  local function walk(path, name)
+    path = M.normalize(path)
+    if path == skip then return end
+    local mode = lfs.symlinkattributes(path, "mode")
+    if mode == "directory" then
+      local names = {}
+      for n in lfs.dir(path) do
+        if n ~= "." and n ~= ".." then names[#names + 1] = n end
+      end
+      table.sort(names)
+      for _, n in ipairs(names) do walk(M.join(path, n), name .. "/" .. n) end
+    elseif mode == "file" then
+      local a = lfs.attributes(path)
+      out[#out + 1] = { name = name, path = path, size = a.size, modified = a.modification }
+    end
+  end
+  for _, path in ipairs(paths) do walk(path, M.basename(path)) end
+  return out
+end
+
+-- STORED are the extensions of files that are compressed already, which an
+-- archive stores as they are.
+local STORED = { png = true, jpg = true, jpeg = true, gif = true, webp = true, zip = true, gz = true,
+  pdf = true, mp3 = true, mp4 = true, mov = true, ogg = true, znb = true, zmd = true, zms = true, ztl = true }
+
+-- readChunks reads a file whole, a chunk at a time, giving the program back
+-- as copyFile does.
+local function readChunks(job, path)
+  local f, err = io.open(path, "rb")
+  if not f then return nil, err end
+  local parts = {}
+  while true do
+    if job.cancelled then f:close() return nil, "cancelled" end
+    local chunk = f:read(math.min(CHUNK, job.budget))
+    if not chunk then break end
+    parts[#parts + 1] = chunk
+    job.bytes = job.bytes + #chunk
+    job.spent = job.spent + #chunk
+    if job.spent >= job.budget then
+      job.spent = 0
+      coroutine.yield()
+    end
+  end
+  f:close()
+  return table.concat(parts)
+end
+
+-- writeArchive makes the job that writes the zip file dest from what is
+-- kept of archive (nil for a new one) and the files to add. The new archive
+-- is written beside dest and put in its place when it is whole, so that
+-- stopping the job, or a failure, leaves what was there.
+local function writeArchive(archive, dest, opts)
+  dest = M.normalize(dest)
+  local password = opts.password
+  if password == nil and archive then password = archive.password end
+  local job = setmetatable({ items = {}, total = 0, bytes = 0, count = 0, results = {}, errors = {},
+    skipped = 0, spent = 0, budget = CHUNK, finished = false, kept = 0, removed = 0, replaced = 0 }, Job)
+  local removing = {}
+  for _, n in ipairs(opts.remove or {}) do removing[#removing + 1] = n end
+  local function isRemoved(name)
+    for _, r in ipairs(removing) do
+      if r == name or (r:sub(-1) == "/" and name:sub(1, #r) == r) then return true end
+    end
+    return false
+  end
+  local adding = {}
+  for _, f in ipairs(opts.add or {}) do
+    adding[f.name] = true
+    job.total = job.total + (f.size or 0)
+  end
+  local keep = {}
+  for _, e in ipairs(archive and archive.entries or {}) do
+    if isRemoved(e.name) then
+      job.removed = job.removed + 1
+    elseif adding[e.name] then
+      job.replaced = job.replaced + 1
+    else
+      keep[#keep + 1] = e
+      job.total = job.total + e.size
+    end
+  end
+  job.todo = #keep + #(opts.add or {}) -- how many files go in it
+  job.co = coroutine.create(function()
+    local tmp = dest .. ".part"
+    local w = zip.create(tmp, password and { password = password } or nil)
+    local function fail(why)
+      os.remove(tmp)
+      job.errors[#job.errors + 1] = tostring(why)
+      job.finished = true
+    end
+    for _, e in ipairs(keep) do
+      if job.cancelled then os.remove(tmp) job.finished = true return end
+      job.current = e.name
+      local data, why = archive.z:read(e.name, archive.password)
+      if not data then return fail(e.name .. ": " .. tostring(why)) end
+      w:add(e.name, data, { store = e.method == "store", modified = e.modified })
+      job.kept = job.kept + 1
+      job.bytes = job.bytes + e.size
+      job.spent = job.spent + e.size
+      if job.spent >= job.budget then
+        job.spent = 0
+        coroutine.yield()
+      end
+    end
+    for _, f in ipairs(opts.add or {}) do
+      if job.cancelled then os.remove(tmp) job.finished = true return end
+      job.current = f.name
+      local data, why = readChunks(job, f.path)
+      if not data then
+        if why == "cancelled" then os.remove(tmp) job.finished = true return end
+        job.errors[#job.errors + 1] = f.name .. ": " .. tostring(why)
+      else
+        w:add(f.name, data, { store = STORED[M.extension(f.name)] or nil, modified = f.modified })
+        job.count = job.count + 1
+      end
+    end
+    local ok, why = w:close()
+    if not ok then return fail(why) end
+    if M.windows then os.remove(dest) end
+    local renamed, rerr = os.rename(tmp, dest)
+    if not renamed then return fail(rerr) end
+    job.results[1] = dest
+    job.finished = true
+  end)
+  return job
+end
+
+-- rewrite makes a job that changes an archive in place, and has these in
+-- opts: remove, a list of names (one ending in "/" is a folder and all in
+-- it), add, a list of { name =, path = } as collect gives them (a file with
+-- the name of one in the archive takes its place), and password: a string
+-- encrypts all of it, false takes the encryption off, nil leaves it as it
+-- is. The job is paste's kind (job:step(), job:cancel()), and says how many
+-- files it added (job.count), kept, removed and replaced.
+function Archive:rewrite(opts)
+  local add = {}
+  for _, f in ipairs(opts.add or {}) do
+    if M.normalize(f.path) ~= M.normalize(self.path) then add[#add + 1] = f end
+  end
+  return writeArchive(self, self.path, { remove = opts.remove, add = add, password = opts.password })
+end
+
+-- compress makes a job that writes the zip file dest of the files and
+-- folders in paths, encrypted with password when there is one. It is
+-- not to overwrite a file: the caller picks a name that is free.
+function M.compress(paths, dest, password)
+  return writeArchive(nil, dest, { add = M.collect(paths, dest), password = password })
 end
 
 -- writeChunks writes data to a file a chunk at a time, giving the program

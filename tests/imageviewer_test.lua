@@ -586,5 +586,126 @@ test("form: an animation that plays so many times stops on its last frame", func
   frm:fire("onClose")
 end)
 
-os.execute(("rm -rf '%s' '%s'"):format(root, movies))
+---------------------------------------------------------------- zip files
+
+-- A folder with a zip file of pictures in folders, an encrypted one, and
+-- a comic book.
+local zroot = os.tmpname()
+os.remove(zroot)
+zroot = zroot .. "-zips"
+assert(lfs.mkdir(zroot))
+local zip = require "zip"
+local function makeZip(path, password)
+  local w = zip.create(password and { password = password } or nil)
+  w:add("red.png", png.new(40, 20, "#ff0000"):encode())
+  w:add("Sub/green.png", png.new(20, 40, "#00ff00"):encode())
+  w:add("Sub/deep/blue.png", png.new(10, 10, "#0000ff"):encode())
+  w:add("Sub/readme.txt", "no picture")
+  w:add(".hidden.png", png.new(2, 2, "#ffffff"):encode())
+  local bytes = assert(w:close())
+  write(path, bytes)
+end
+makeZip(zroot .. "/pics.zip")
+makeZip(zroot .. "/secret.zip", "pw")
+makeZip(zroot .. "/comic.cbz")
+write(zroot .. "/plain.png.txt", "x")
+
+test("folder: a zip file is a folder to go into, and paths inside it", function()
+  eq(names(assert(folder.list(zroot))), "comic.cbz,pics.zip,secret.zip")
+  local list = assert(folder.list(zroot))
+  ok(list[2].dir and list[2].archive, "it is a folder")
+  eq(list[2].path, zroot .. "/pics.zip!/")
+  local file, inner = folder.split(zroot .. "/pics.zip!/Sub/deep")
+  eq(file, zroot .. "/pics.zip"); eq(inner, "Sub/deep")
+  eq(folder.split(zroot), nil)
+  eq(folder.parent(zroot .. "/pics.zip!/Sub/deep"), zroot .. "/pics.zip!/Sub")
+  eq(folder.parent(zroot .. "/pics.zip!/Sub"), zroot .. "/pics.zip!/")
+  eq(folder.parent(zroot .. "/pics.zip!/"), zroot, "up from the top is the folder it is in")
+  eq(folder.basename(zroot .. "/pics.zip!/"), "pics.zip")
+  eq(folder.basename(zroot .. "/pics.zip!/Sub/deep"), "deep")
+  eq(folder.normalize(zroot .. "/pics.zip!/Sub//"), zroot .. "/pics.zip!/Sub")
+  eq(folder.join(zroot .. "/pics.zip!/", "Sub"), zroot .. "/pics.zip!/Sub")
+  -- Its contents: folders and pictures, mixed, the way a folder's are.
+  assert(folder.archive(zroot .. "/pics.zip"))
+  eq(names(assert(folder.list(zroot .. "/pics.zip!/"))), "red.png,Sub")
+  local sub = assert(folder.list(zroot .. "/pics.zip!/Sub"))
+  eq(names(sub), "deep,green.png")
+  eq(sub[2].inner, "Sub/green.png")
+  eq(png.decode(assert(folder.read(sub[2]))).width, 20)
+  eq(names(assert(folder.list(zroot .. "/pics.zip!/Sub/deep"))), "blue.png")
+  -- An encrypted one needs its password.
+  folder.closeArchives()
+  local a, why, locked = folder.archive(zroot .. "/secret.zip")
+  eq(a, nil); eq(locked, "locked"); ok(why:find("password"), why)
+  eq(select(3, folder.archive(zroot .. "/secret.zip", "bad")), "locked")
+  assert(folder.archive(zroot .. "/secret.zip", "pw"))
+  eq(png.decode(assert(folder.read(assert(folder.list(zroot .. "/secret.zip!/"))[1]))).height, 20)
+  folder.closeArchives()
+end)
+
+test("form: a zip file is browsed like a folder, and its pictures shown", function()
+  local gui = require "gui"
+  ok(frm.open(zroot))
+  eq(names(frm.entries()), "..,comic.cbz,pics.zip,secret.zip")
+  list.selected = 3 -- pics.zip
+  eq(frm:fire("onKeyPreview", "Enter", ""), true)
+  eq(frm.folder(), zroot .. "/pics.zip!/")
+  eq(names(frm.entries()), "..,red.png,Sub")
+  eq(frm.caption, "pics.zip - Image Viewer")
+  frm.flush()
+  eq(frm.shown().image.width, 40, "red.png from inside the zip file")
+  list.selected = 3 -- Sub
+  frm:fire("onKeyPreview", "Right", "")
+  eq(frm.folder(), zroot .. "/pics.zip!/Sub")
+  eq(frm.caption, "pics.zip/Sub - Image Viewer")
+  eq(names(frm.entries()), "..,deep,green.png")
+  list.selected = 3
+  frm.flush()
+  eq(frm.shown().image.height, 40)
+  -- Backspace goes up, and from the top comes out of the file, onto it.
+  frm:fire("onKeyPreview", "Backspace", "")
+  eq(frm.folder(), zroot .. "/pics.zip!/")
+  eq(frm.entries()[list.selected].name, "Sub")
+  frm:fire("onKeyPreview", "Backspace", "")
+  eq(frm.folder(), zroot)
+  eq(frm.entries()[list.selected].name, "pics.zip")
+  ok(not folder.split(require("settings").load().last), "what is kept is a real folder")
+  -- The encrypted one asks for its password until it is right, once.
+  local answers, asked = { "bad", "pw" }, 0
+  local realBox = gui.passwordbox
+  gui.passwordbox = function() asked = asked + 1 return answers[asked] end
+  list.selected = 4 -- secret.zip
+  frm:fire("onKeyPreview", "Enter", "")
+  eq(asked, 2)
+  eq(frm.folder(), zroot .. "/secret.zip!/")
+  frm.flush()
+  eq(frm.shown().image.width, 40)
+  frm:fire("onKeyPreview", "Backspace", "")
+  list.selected = 4
+  frm:fire("onKeyPreview", "Enter", "")
+  eq(asked, 2, "it remembers the password")
+  frm.open(zroot)
+  gui.passwordbox = realBox
+end)
+
+test("form: a zip file named on the command line or dropped opens", function()
+  local gui = require "gui"
+  local realBox = gui.passwordbox
+  gui.passwordbox = function() return "pw" end
+  frm:fire("onDrop", "", { zroot .. "/pics.zip" })
+  eq(frm.folder(), zroot .. "/pics.zip!/")
+  frm:fire("onDrop", "", { zroot .. "/secret.zip" })
+  eq(frm.folder(), zroot .. "/secret.zip!/")
+  frm:fire("onDrop", "", { root })
+  eq(frm.folder(), root)
+  frm:fire("onDrop", "", { root .. "/a/inside.png" })
+  eq(frm.folder(), root .. "/a")
+  -- A comic book opens as a zip file does.
+  frm.open(zroot)
+  frm:fire("onDrop", "", { zroot .. "/comic.cbz" })
+  eq(frm.folder(), zroot .. "/comic.cbz!/")
+  gui.passwordbox = realBox
+end)
+
+os.execute(("rm -rf '%s' '%s' '%s'"):format(root, movies, zroot))
 t.done("imageviewer")

@@ -174,7 +174,15 @@ what it is and how it is used. UI text is plain English, without jargon.
   "locked"` so the form asks again. File names stay readable in a zip
   whatever is done. microreader only opens such books. files opens zip
   archives in forms/Archive.lua (fs.archive and `archive:extract`, a job like
-  paste's, refusing names that reach out of the folder).
+  paste's, refusing names that reach out of the folder). The same window adds
+  files (a button, or dropped on it), deletes them and sets or takes off the
+  password: `archive:rewrite` writes a new zip beside the old and renames it
+  over it when whole, so stopping it leaves the archive as it was, and
+  `fs.compress` makes a new zip (Compress to Zip, New Zip File). tlua 0.9.3
+  gave an encrypted zip's files the date 1979-11-30 (fixed in 0.9.4).
+  imageviewer treats a zip or .cbz as a folder: a place in one is written
+  `file.zip!/inner/dir` (folder.lua splits it), read from the archive's
+  bytes with png.decodeFrames, the password asked for once per run.
 - microword and micronotes edit tables in place: MarkdownEdit puts the caret
   in a cell (`ed.cell`), where typing, the arrows, Tab and Enter work, and
   `ed:insertTable`, `insertRow`, `insertColumn`, `deleteRow`, `deleteColumn`

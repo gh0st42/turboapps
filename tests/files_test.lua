@@ -342,10 +342,10 @@ end
 
 test("context menu: what it offers depends on what is clicked", function()
   frm.go(box)
-  eq(itemNames(frm.menuFor(rowNamed("beta"))), "open system - cut copy paste - rename delete - copyPath copyName - newFolder")
-  eq(itemNames(frm.menuFor(rowNamed("app.ztl"))), "run - archive extract - cut copy paste - rename delete - copyPath copyName - newFolder")
-  eq(itemNames(frm.menuFor(rowNamed("Beta.lua"))), "open run Open &With - cut copy paste - rename delete - copyPath copyName - newFolder")
-  eq(itemNames(frm.menuFor(0)), "newFolder paste - hidden &Sort By refresh - copyFolderPath system - settings")
+  eq(itemNames(frm.menuFor(rowNamed("beta"))), "open system - cut copy paste - rename delete - compress - copyPath copyName - newFolder")
+  eq(itemNames(frm.menuFor(rowNamed("app.ztl"))), "run - archive extract - cut copy paste - rename delete - compress - copyPath copyName - newFolder")
+  eq(itemNames(frm.menuFor(rowNamed("Beta.lua"))), "open run Open &With - cut copy paste - rename delete - compress - copyPath copyName - newFolder")
+  eq(itemNames(frm.menuFor(0)), "newFolder newZip paste - hidden &Sort By refresh - copyFolderPath system - settings")
 end)
 
 test("context menu: a right click selects the row under it", function()
@@ -370,7 +370,7 @@ test("context menu: its items do what they say", function()
   eq(#list.entries, 7)
   hidden[2]("Show Hidden Files", false)
   eq(#list.entries, 5)
-  local sortItems = items[5][2]
+  local sortItems = items[6][2]
   sortItems[3][2]() -- by modified
   eq(frm.state().settings.sortBy, "modified")
   frm.applySettings { sortBy = "name", descending = false }
@@ -824,6 +824,80 @@ test("archive: an encrypted one needs its password", function()
   eq(a, nil); eq(locked, nil)
 end)
 
+test("archive: files and folders are compressed into a zip, with a password if wanted", function()
+  write(arcDir .. "/one.txt", "1")
+  local src2 = arcDir .. "/pack"
+  lfs.mkdir(src2); lfs.mkdir(src2 .. "/inner")
+  write(src2 .. "/a.txt", "alpha"); write(src2 .. "/inner/b.txt", ("b"):rep(4000)); write(src2 .. "/pic.png", "PNG")
+  lfs.touch(src2 .. "/a.txt", 1000000000, 1000000000)
+  local dest = arcDir .. "/packed.zip"
+  local job = fs.compress({ src2, arcDir .. "/one.txt" }, dest)
+  eq(job.finished, false)
+  run(job, 1000)
+  eq(job.count, 4); eq(#job.errors, 0); eq(job.results[1], dest)
+  ok(not fs.exists(dest .. ".part"), "no half-made file is left")
+  local a = assert(fs.archive(dest))
+  local seen = {}
+  for _, e in ipairs(a.entries) do seen[e.name] = e end
+  ok(seen["pack/a.txt"] and seen["pack/inner/b.txt"] and seen["pack/pic.png"] and seen["one.txt"], "names keep the folders")
+  eq(seen["pack/a.txt"].modified, 1000000000)
+  eq(seen["pack/pic.png"].method, "store")
+  -- With a password, and the archive being made is never put in itself.
+  local sec = arcDir .. "/sec.zip"
+  job = fs.compress({ arcDir .. "/pack", sec }, sec, "pw")
+  run(job)
+  eq(job.count, 3)
+  eq(select(3, fs.archive(sec)), "locked")
+  local b = assert(fs.archive(sec, "pw"))
+  eq(b.encrypted, true)
+  -- Stopped, it leaves nothing.
+  local stop = arcDir .. "/stop.zip"
+  job = fs.compress({ arcDir .. "/pack" }, stop)
+  job:step(1)
+  job:cancel()
+  run(job)
+  ok(not fs.exists(stop) and not fs.exists(stop .. ".part"), "nothing left")
+end)
+
+test("archive: files are added, removed and replaced in place, and the password changed", function()
+  local z = arcDir .. "/manage.zip"
+  makeZip(z, nil, { { "keep.txt", "keep", 1000000000 }, { "gone.txt", "x" }, { "dir/x.txt", "1" }, { "dir/y.txt", "2" } })
+  write(arcDir .. "/new.txt", "new!")
+  write(arcDir .. "/keep.txt", "replaced")
+  local a = assert(fs.archive(z))
+  local job = a:rewrite { remove = { "gone.txt", "dir/" }, add = fs.collect({ arcDir .. "/new.txt", arcDir .. "/keep.txt" }) }
+  run(job)
+  eq(job.count, 2); eq(job.removed, 3); eq(job.replaced, 1); eq(#job.errors, 0)
+  a = assert(fs.archive(z))
+  eq(#a.entries, 2)
+  eq(a.z:read("new.txt"), "new!"); eq(a.z:read("keep.txt"), "replaced")
+  -- Add a file whose name is not taken, and an encryption: all of it.
+  job = a:rewrite { password = "s3" }
+  run(job)
+  eq(select(3, fs.archive(z)), "locked")
+  a = assert(fs.archive(z, "s3"))
+  eq(a.z:read("new.txt", "s3"), "new!")
+  -- Changing a locked archive keeps its password, and false takes it off.
+  job = a:rewrite { add = fs.collect({ arcDir .. "/one.txt" }) }
+  run(job)
+  eq(select(3, fs.archive(z)), "locked")
+  a = assert(fs.archive(z, "s3"))
+  eq(#a.entries, 3)
+  run(a:rewrite { password = false })
+  a = assert(fs.archive(z))
+  eq(a.encrypted, false); eq(a.z:read("one.txt"), "1")
+  -- The archive cannot be added to itself, and stopping leaves it whole.
+  job = a:rewrite { add = fs.collect({ z }) }
+  run(job)
+  eq(#assert(fs.archive(z)).entries, 3)
+  job = a:rewrite { remove = { "new.txt" } }
+  job:step(1)
+  job:cancel()
+  run(job)
+  eq(#assert(fs.archive(z)).entries, 3)
+  ok(not fs.exists(z .. ".part"), "no half-made file")
+end)
+
 test("archive: the window lists it, asks the password, and unpacks", function()
   local gui = require "gui"
   local form = require "forms.Archive"
@@ -838,7 +912,7 @@ test("archive: the window lists it, asks the password, and unpacks", function()
   gui.msgbox = function() return "ok" end
   ok(form.fill(z), "opened")
   eq(asked, 2)
-  eq(#form.lstEntries.items, 2)
+  eq(#form.lstEntries.entries, 2)
   ok(form.lblInfo.caption:find("encrypted"), form.lblInfo.caption)
   -- Everything, to a folder chosen.
   gui.choosedir = function() return arcDir .. "/winout" end
@@ -849,8 +923,7 @@ test("archive: the window lists it, asks the password, and unpacks", function()
   eq(readAll(arcDir .. "/winout/d/b.txt"), "beta")
   eq(form.extracted.count, 2)
   -- One selected.
-  form.lstEntries.selected = 1
-  form.lstEntries:fire("onChange")
+  form.lstEntries:pick(1)
   gui.choosedir = function() return arcDir .. "/winone" end
   form.cmdSelected:fire("onClick")
   r = form.running()
@@ -862,6 +935,113 @@ test("archive: the window lists it, asks the password, and unpacks", function()
   while form.running() do r.tick() end
   eq(readAll(arcDir .. "/win/a.txt"), "alpha")
   gui.passwordbox, gui.msgbox, gui.choosedir = realBox, realMsg, realDir
+end)
+
+test("archive: files are dropped on the window, deleted, and the password changed", function()
+  local gui = require "gui"
+  local form = require "forms.Archive"
+  local z = arcDir .. "/live.zip"
+  makeZip(z, nil, { { "a.txt", "alpha" }, { "b.txt", "beta" }, { "c.txt", "gamma" } })
+  write(arcDir .. "/dropped.txt", "dropped")
+  lfs.mkdir(arcDir .. "/dropdir"); write(arcDir .. "/dropdir/in.txt", "in")
+  local realBox, realMsg, realOpen, realDir = gui.passwordbox, gui.msgbox, gui.openfile, gui.choosedir
+  local said = {}
+  gui.msgbox = function(text) said[#said + 1] = text return "yes" end
+  ok(form.fill(z))
+  local function settle() local r = form.running() while form.running() do r.tick() end end
+  -- Dropped files and folders go in.
+  form:fire("onDrop", "", { arcDir .. "/dropped.txt", arcDir .. "/dropdir" })
+  settle()
+  eq(#form.lstEntries.entries, 5)
+  ok(form.lblStatus.caption:find("Added 2 files"), form.lblStatus.caption)
+  eq(form.archive().z:read("dropdir/in.txt"), "in")
+  ok(form.changed, "it says it changed")
+  -- The button asks for files.
+  gui.openfile = function() return { arcDir .. "/one.txt" } end
+  form.cmdAdd:fire("onClick")
+  settle()
+  eq(#form.lstEntries.entries, 6)
+  gui.choosedir = function() return arcDir .. "/pack" end
+  form.cmdAddFolder:fire("onClick")
+  settle()
+  ok(form.archive().z:exists("pack/a.txt"), "a folder with what is in it")
+  -- Delete what is selected, once asked.
+  form.lstEntries:selectNames({ "a.txt", "b.txt" })
+  eq(#form.names(), 2)
+  said = {}
+  form.cmdDelete:fire("onClick")
+  ok(said[1]:find("2 files"), said[1])
+  settle()
+  ok(not form.archive().z:exists("a.txt") and form.archive().z:exists("c.txt"), "those two are gone")
+  ok(form.lblStatus.caption:find("Deleted 2 files"), form.lblStatus.caption)
+  gui.msgbox = function() return "no" end
+  form.lstEntries:pick(1)
+  form.lstEntries:fire("onCommand", "Delete")
+  ok(not form.running(), "refused, nothing runs")
+  gui.msgbox = function() return "yes" end
+  -- A password for all of it, and the archive is read again with it.
+  gui.passwordbox = function() return "pw" end
+  form.cmdPassword:fire("onClick")
+  settle()
+  eq(select(3, fs.archive(z)), "locked")
+  ok(form.lblInfo.caption:find("encrypted"), form.lblInfo.caption)
+  -- A change to it keeps the password.
+  form:fire("onDrop", "", { arcDir .. "/dropped.txt" })
+  settle()
+  eq(select(3, fs.archive(z)), "locked")
+  ok(fs.archive(z, "pw"):extract(arcDir .. "/liveout") ~= nil)
+  gui.passwordbox = function() return "" end
+  form.cmdPassword:fire("onClick")
+  settle()
+  ok(fs.archive(z) ~= nil, "readable without one")
+  -- Closing stops a job and leaves the archive whole.
+  form:fire("onDrop", "", { arcDir .. "/pack" })
+  form:fire("onClose")
+  ok(not form.running(), "stopped")
+  ok(fs.archive(z) ~= nil)
+  gui.passwordbox, gui.msgbox, gui.openfile, gui.choosedir = realBox, realMsg, realOpen, realDir
+end)
+
+test("zip files: compress what is selected, and make an empty one", function()
+  local gui = require "gui"
+  local realIn, realBox = gui.inputbox, gui.passwordbox
+  local work = root .. "/zipwork"
+  lfs.mkdir(work); lfs.mkdir(work .. "/folder")
+  write(work .. "/a.txt", "alpha"); write(work .. "/folder/b.txt", "beta")
+  frm.go(work)
+  local answer, pw = "squash", ""
+  gui.inputbox = function() return answer end
+  gui.passwordbox = function() return pw end
+  local function settle()
+    while frm.pasting() do frm.pasting().tick() end
+  end
+  list:selectNames({ "a.txt", "folder" })
+  frm.compress()
+  ok(frm.pasting(), "it runs a step at a time")
+  settle()
+  local a = assert(fs.archive(work .. "/squash.zip"))
+  eq(#a.entries, 2)
+  ok(a.z:exists("folder/b.txt"), "the folder's files")
+  eq((list:selectedRow() or {}).name, "squash.zip")
+  ok(frm.lblStatus.caption:find("Packed 2 items into squash.zip"), frm.lblStatus.caption)
+  -- A name that is taken is not overwritten; a password locks it.
+  pw = "pw"
+  list:selectNames({ "a.txt" })
+  frm.compress()
+  settle()
+  eq(select(3, fs.archive(work .. "/squash copy.zip")), "locked")
+  ok(frm.lblStatus.caption:find("(encrypted)", 1, true), frm.lblStatus.caption)
+  -- An empty one, to drop files on.
+  pw, answer = "", "empty"
+  frm.newZip()
+  settle()
+  eq(#assert(fs.archive(work .. "/empty.zip")).entries, 0)
+  -- Cancelling a box makes nothing.
+  answer = nil
+  frm.newZip()
+  ok(not frm.pasting(), "nothing runs")
+  gui.inputbox, gui.passwordbox = realIn, realBox
+  frm.go(box)
 end)
 
 test("archive: the menu offers it for zip files", function()

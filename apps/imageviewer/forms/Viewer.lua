@@ -164,7 +164,14 @@ local function showSelected()
   elseif e.dir then
     shown = { why = e.up and "Backspace or Enter goes up" or "Enter opens this folder" }
   else
-    local frames, why = png.frames(e.path)
+    local frames, why
+    if e.zip then
+      -- A picture in a zip file is decoded from its bytes.
+      local data, rwhy = folder.read(e)
+      if data then frames, why = png.decodeFrames(data) else why = rwhy end
+    else
+      frames, why = png.frames(e.path)
+    end
     if frames then
       shown = { path = e.path, frames = frames, index = 1, plays = 1, image = frames[1].image }
     else
@@ -222,17 +229,45 @@ local function caption(e)
   return e.dir and (e.name .. "/") or e.name
 end
 
--- open shows a folder. pick is the name to have picked, else the first
--- picture, else the first row. false and a message when it cannot be read.
+-- unlock opens a zip file to look into, asking for its password until it is
+-- right (it is not asked again while the program runs). It says whether it
+-- is open.
+local passwords = {}
+local function unlock(file)
+  local a, why, locked = folder.archive(file, passwords[file])
+  while not a and locked == "locked" do
+    local pw = gui.passwordbox((why:find("wrong", 1, true) and "Wrong password. " or "")
+      .. folder.basename(file) .. " is encrypted.\nPassword:", "Open Archive")
+    if not pw then return false end
+    a, why, locked = folder.archive(file, pw)
+    if a then passwords[file] = pw end
+  end
+  if not a then
+    gui.msgbox(("Cannot open %s.\n\n%s"):format(file, tostring(why)), "ok", "Image Viewer")
+    return false
+  end
+  return true
+end
+
+-- open shows a folder, or a place inside a zip file ("a.zip!/sub", see
+-- folder.lua). pick is the name to have picked, else the first picture, else
+-- the first row. false and a message when it cannot be read.
 local function open(path, pick)
   path = folder.normalize(path)
+  local file, inner = folder.split(path)
+  if file then
+    if not unlock(file) then return false end
+  else
+    folder.closeArchives()
+  end
   local list, why = folder.list(path)
   if not list then
     gui.msgbox(("Cannot open %s.\n\n%s"):format(path, tostring(why)), "ok", "Image Viewer")
     return false
   end
   dir = path
-  prefs.last = path
+  -- What is kept is the real folder, a zip file's being the one it is in.
+  prefs.last = file and folder.parent(file) or path
   settings.save(prefs)
   rows = {}
   if folder.parent(path) ~= path then
@@ -247,7 +282,9 @@ local function open(path, pick)
   end
   frm.lstFiles.items = items
   frm.lstFiles.selected = at or first or (#rows > 0 and 1 or 0)
-  frm.caption = ("%s - Image Viewer"):format(path == "/" and path or folder.basename(path))
+  local shownAs = path == "/" and path or folder.basename(path)
+  if file and inner ~= "" then shownAs = folder.basename(file) .. "/" .. inner end
+  frm.caption = ("%s - Image Viewer"):format(shownAs)
   frm.lstFiles:focus()
   picked()
   return true
@@ -270,8 +307,14 @@ local function up()
 end
 
 local function chooseFolder()
-  local path = gui.choosedir { title = "Open Folder", dir = dir }
+  local path = gui.choosedir { title = "Open Folder", dir = (folder.split(dir) and folder.parent(folder.split(dir))) or dir }
   if path then open(path) end
+end
+
+-- chooseArchive opens a zip file (or a comic book) as a folder.
+local function chooseArchive()
+  local file = gui.openfile { title = "Open Zip File", filter = "Zip files\t*.{zip,cbz}\nAll files\t*" }
+  if file then open(file .. "!/") end
 end
 
 ---------------------------------------------------------------- zooming
@@ -393,6 +436,8 @@ Cmd = and Cmd -    zoom in and out; the wheel does too, round the mouse
 Cmd 0    fit the window    Cmd 1    actual size (so does a double click)
 Shift and the arrows    move a picture bigger than the window; so does dragging
 F11    the whole screen    Cmd O (Ctrl O)    choose a folder to open
+Cmd Shift O    open a zip file (or comic book .cbz) as a folder; an
+               encrypted one asks for its password
 Cmd Up (Ctrl Up)    up one folder
 F1    this help
 On the whole screen the arrows, Page Up and Down, Home and End go to the
@@ -446,6 +491,7 @@ function frm:onKeyPreview(key, text)
   local shifted = key:match("^Shift%+(%a+)$")
   if command then
     local c = command:lower()
+    if command == "Shift+O" or command == "Shift+o" then chooseArchive() return true end
     if c == "o" then chooseFolder() return true end
     if command == "Up" then up() return true end
     if c == "=" or c == "+" or command == "Shift+=" or command == "Shift++" then return zoom(1.25) end
@@ -505,7 +551,9 @@ end
 -- last shown, else the Pictures folder.
 local start = arg and arg[1]
 local mode = start and start ~= "" and lfs.attributes(start, "mode")
-if mode == "file" then
+if mode == "file" and folder.isArchive(start) then
+  open(folder.normalize(start) .. "!/")
+elseif mode == "file" then
   start = folder.normalize(start)
   open(folder.parent(start), folder.basename(start))
 elseif mode == "directory" then
@@ -514,6 +562,20 @@ elseif prefs.last ~= "" and lfs.attributes(prefs.last, "mode") == "directory" an
   -- opened
 else
   open(folder.start())
+end
+
+-- A folder, a zip file or a picture dropped on the window is opened.
+function frm:onDrop(text, lines)
+  local path = lines and lines[1]
+  local mode = path and lfs.attributes(path, "mode")
+  if mode == "directory" then
+    open(path)
+  elseif mode == "file" and folder.isArchive(path) then
+    open(folder.normalize(path) .. "!/")
+  elseif mode == "file" and folder.isImage(path) then
+    path = folder.normalize(path)
+    open(folder.parent(path), folder.basename(path))
+  end
 end
 
 function frm:onClose()
