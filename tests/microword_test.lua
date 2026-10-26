@@ -190,6 +190,50 @@ test("form: a password encrypts the whole document, and opening it asks", functi
   gui.passwordbox = realBox
 end)
 
+test("form: Find and Replace work on the document", function()
+  local gui = require "gui"
+  local findForm = require "forms.Find"
+  local realMsg = gui.msgbox
+  local said
+  gui.msgbox = function(text) said = text return "ok" end
+  edit:load("The cat sat. A CAT here.\n\nOne **cat** more, and a catalogue.\n")
+  edit.ed:setCaret { b = 1, o = 0 }
+  findForm.txtFind.text = "cat"
+  findForm.chkWhole.checked = true
+  frm.actions.mnuFindNext()
+  eq(edit.ed:copyText(), "cat")
+  ok(findForm.lblResult.caption:find("1 of 3"), findForm.lblResult.caption)
+  frm.actions.mnuFindNext()
+  eq(edit.ed:copyText(), "CAT")
+  frm.actions.mnuFindPrev()
+  eq(edit.ed:copyText(), "cat")
+  eq(edit.ed:range().o, 4)
+  -- Whole words off: the catalogue counts too.
+  findForm.chkWhole.checked = false
+  frm.actions.mnuFindNext() frm.actions.mnuFindNext() frm.actions.mnuFindNext()
+  ok(findForm.lblResult.caption:find("4 of 4"), findForm.lblResult.caption)
+  frm.actions.mnuFindNext()
+  ok(findForm.lblResult.caption:find("from the top again"), findForm.lblResult.caption)
+  -- Nothing found says so.
+  findForm.txtFind.text = "dog"
+  frm.actions.mnuFindNext()
+  ok(findForm.lblResult.caption:find("Cannot find"), findForm.lblResult.caption)
+  -- Replace one at a time, keeping the style, then the rest.
+  findForm.txtFind.text = "cat"
+  findForm.txtReplace.text = "dog"
+  edit.ed:setCaret { b = 1, o = 0 }
+  findForm.cmdReplace:fire("onClick") -- selects the first
+  findForm.cmdReplace:fire("onClick") -- replaces it
+  ok(edit:markdown():find("The dog sat", 1, true), edit:markdown())
+  findForm.cmdReplaceAll:fire("onClick")
+  eq(edit:markdown(), "The dog sat. A dog here.\n\nOne **dog** more, and a dogalogue.\n")
+  ok(findForm.lblResult.caption:find("Replaced 3 matches"), findForm.lblResult.caption)
+  edit.ed:undo()
+  ok(edit:markdown():find("A CAT here"), "Replace All is one step of undo")
+  ok(frm.caption:find("^%*"), frm.caption)
+  gui.msgbox = realMsg
+end)
+
 test("form: save, then open again", function()
   local file = root .. "/form.zmd"
   ok(frm.saveTo(file), "saved")

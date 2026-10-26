@@ -9,6 +9,7 @@
 local gui = require "gui"
 local lfs = require "lfs"
 local zmd = require "zmd"
+local find = require "forms.Find"
 local source = require "forms.Source"
 local frm = gui.load "MicroWord" --[[@as forms.MicroWord]]
 
@@ -26,6 +27,9 @@ local ON, OFF = "#c9dcf7", "#e4e4e4"
 local STYLES = { "p", "h1", "h2", "h3", "quote", "code", "ul", "ol" }
 
 local function ed() return edit.ed end
+
+-- What the Find dialog needs of the document.
+find.attach { ed = ed, changed = function() edit:changed() end, moved = function() edit:moved() end }
 
 ---------------------------------------------------------------- showing
 
@@ -282,6 +286,8 @@ local help = [[Typing at the start of a paragraph:
                        (a new row after the last), Escape to leave it;
                        the Table menu adds and removes rows and columns
 
+Cmd+F finds, Cmd+G and Cmd+Shift+G go to the next and the one before,
+Cmd+R replaces (one at a time, or all of them).
 In a list, Tab and Shift+Tab move an item in and out,
 and Enter on an empty item ends the list.
 In a code block, Enter on an empty last line leaves it.
@@ -311,6 +317,10 @@ local actions = {
   mnuCopy = copy,
   mnuPaste = paste,
   mnuSelectAll = function() ed():selectAll() edit:moved() end,
+  mnuFind = function() find.open(false) end,
+  mnuFindNext = function() find.findNext(false) end,
+  mnuFindPrev = function() find.findNext(true) end,
+  mnuReplace = function() find.open(true) end,
   mnuImage = insertPicture,
   mnuLink = editLink,
   mnuRule = function() change(function(e) e:insertRule() end) end,
@@ -409,6 +419,7 @@ end
 
 function frm:onClose()
   if not confirmDiscard() then return false end
+  if find.visible then find:close() end
 end
 
 -- A document dropped on the window is opened; a picture goes in at the
