@@ -183,6 +183,18 @@ what it is and how it is used. UI text is plain English, without jargon.
   imageviewer treats a zip or .cbz as a folder: a place in one is written
   `file.zip!/inner/dir` (folder.lua splits it), read from the archive's
   bytes with png.decodeFrames, the password asked for once per run.
+- microword and micronotes find and replace through tlua's editor (`ed:find`,
+  `replace`, `replaceAll`, `countMatches`: one block's text at a time, tables
+  not searched) in a Find form of their own; micronotes has the same in its
+  Read view (`view:search(text, back)`) and Source view (finder.lua, on the
+  text box). micronotes' search box is `Notebook:find` (words, phrases,
+  -words, #tags, scored, with a snippet) over a results list that takes the
+  tree's place; tags are read from the text by `notebook.tagsOf` (not in
+  code, headings or link addresses) and shown as links in the Read view by
+  `notebook.linkTags`. microbrowser keeps its history in store.lua (1000
+  pages, the file's `history`), shows it in forms/History.lua, and finds in
+  a bar over the page. imageviewer turns and flips what it shows with
+  png's `rotate` and `flip` (the next tlua); the file is never changed.
 - microword and micronotes edit tables in place: MarkdownEdit puts the caret
   in a cell (`ed.cell`), where typing, the arrows, Tab and Enter work, and
   `ed:insertTable`, `insertRow`, `insertColumn`, `deleteRow`, `deleteColumn`
