@@ -1,0 +1,47 @@
+name: CI
+
+# Every push and pull request: the apps' tests and layout checks on Linux and
+# macOS (headless: Linux gets Xvfb for a screen), and a try at packing a
+# release, so that what a tag would publish is known to work.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/tlua
+      - name: Tests and layouts
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then xvfb-run -a make check; else make check; fi
+      - name: Every app bundles
+        run: make
+
+  package:
+    name: pack a release
+    runs-on: ubuntu-24.04
+    needs: test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/tlua
+      - name: Pack
+        run: scripts/package.sh 0.0.0-ci
+      - name: A fused program starts
+        run: |
+          tar xzf release/turboapps-0.0.0-ci-linux-amd64.tar.gz
+          cd turboapps-0.0.0-ci-linux-amd64
+          # 124: still running when timeout stopped it.
+          set +e
+          xvfb-run -a timeout 8 ./calculator
+          code=$?
+          [ "$code" = 124 ] || { echo "::error::calculator exited with $code"; exit 1; }

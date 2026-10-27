@@ -53,6 +53,18 @@ These were agreed with the owner; keep to them.
 - **Ask when a choice is the owner's** (what a feature should do, a file
   format, an app's name); decide the rest yourself and say what you chose.
 
+## Releases and CI
+
+`.github/workflows/ci.yml` runs `make check` on Linux (under Xvfb) and macOS
+and a dry run of `scripts/package.sh`; a pushed tag `vX.Y.Z` runs
+`release.yml`, which does the same and publishes the source, the `.ztl`
+bundles and native programs for linux-amd64, linux-arm64, darwin-arm64 and
+windows-amd64 (best effort). The programs are made on one Linux runner by
+`tlua fuse --base`, on the tlua release named in `.tlua-version`, taken from
+github.com/gh0st42/tlua and checked against its SHA256SUMS. When an app needs
+a newer tlua, raise `.tlua-version` in the same commit and say so in the
+README's note on versions. A tag is not pushed without being asked.
+
 ## Building and testing
 
 ```sh

@@ -52,6 +52,19 @@ A `.ztl` is the app's folder zipped by `tlua bundle`, with `main.lua` at the
 root. `tlua fuse -o calculator apps/calculator` makes a standalone executable
 from the same folder instead.
 
+## Releases
+
+Pushing a tag such as `v0.2.0` makes a GitHub release (`.github/workflows/release.yml`):
+the source, every app as a `.ztl` (and all of them in a zip), and every app as a
+native program, one archive each for Linux amd64 and arm64, macOS arm64 and
+Windows amd64, each program fused onto that platform's tlua (`tlua fuse --base`).
+The macOS programs are not signed (`xattr -dr com.apple.quarantine .` if one is
+refused), and Windows ones open a console window beside the app. The tlua they are
+built on is the release named in `.tlua-version`: change it, and nothing else, to
+move to a newer one. `scripts/package.sh VERSION` does the same by hand into
+`release/`; `.github/workflows/ci.yml` tests every push on Linux and macOS and
+tries the packing.
+
 ## Working on an app
 
 ```sh

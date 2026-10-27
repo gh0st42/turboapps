@@ -1,0 +1,61 @@
+name: Release
+
+# Pushing a tag such as v0.2.0 tests the apps and publishes a release of:
+#
+#   the source (tar.gz and zip),
+#   every app as a .ztl bundle (any tlua runs one) and all of them in a zip,
+#   every app as a native program, fused onto tlua, for Linux amd64 and arm64,
+#   macOS arm64 and Windows amd64 (one archive each; Windows is best effort),
+#   SHA256SUMS.
+#
+# The tlua they are built on is the release named in .tlua-version. A tag with
+# a hyphen (v0.2.0-rc1) makes a pre-release.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/tlua
+
+      - name: Tests and layouts
+        run: xvfb-run -a make check
+
+      - name: Pack
+        env:
+          SOURCE_REF: ${{ github.ref_name }}
+        run: scripts/package.sh "${GITHUB_REF_NAME#v}"
+
+      - name: A fused program starts
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          tar xzf "release/turboapps-$v-linux-amd64.tar.gz"
+          cd "turboapps-$v-linux-amd64"
+          set +e
+          xvfb-run -a timeout 8 ./calculator
+          code=$?
+          [ "$code" = 124 ] || { echo "::error::calculator exited with $code"; exit 1; }
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          v=${GITHUB_REF_NAME#v}
+          tlua=$(tr -d '[:space:]' < .tlua-version)
+          flags=""
+          case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
+          cat > notes.md <<NOTES
+          Apps for tlua $tlua. Run a native program (Linux, macOS, Windows) or a \`.ztl\` with \`tlua app.ztl\`.
+          The macOS programs are not signed: \`xattr -dr com.apple.quarantine .\` once, if they are refused.
+          Windows programs open a console window beside the app.
+          NOTES
+          gh release create "$GITHUB_REF_NAME" release/* \
+            --title "turboapps $v" --notes-file notes.md --generate-notes --verify-tag $flags

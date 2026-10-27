@@ -1,0 +1,55 @@
+name: Install tlua
+description: >
+  tlua, with its GUI, from a release of github.com/gh0st42/tlua (the version
+  in .tlua-version unless one is given), on PATH; on Linux also the X11 and
+  other libraries it needs to run and Xvfb for a screen to run it on.
+inputs:
+  version:
+    description: "The release to install, such as 0.9.6 (default: the one in .tlua-version)"
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Libraries tlua needs (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq --no-install-recommends \
+          xvfb xauth zip unzip fonts-dejavu-core \
+          libx11-6 libxext6 libxft2 libxinerama1 libxcursor1 libxrender1 \
+          libxfixes3 libxrandr2 libxi6 libxxf86vm1 libpango-1.0-0 libpangocairo-1.0-0 \
+          libpangoft2-1.0-0 libcairo2 libgl1 libglu1-mesa libegl1 libwayland-client0 \
+          libwayland-cursor0 libwayland-egl1 libxkbcommon0 libdbus-1-3 libfontconfig1 \
+          libfreetype6 libharfbuzz0b libasound2t64
+
+    - name: Download tlua
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+      run: |
+        version=${VERSION:-$(tr -d '[:space:]' < .tlua-version)}
+        case "$RUNNER_OS-$RUNNER_ARCH" in
+          Linux-X64) target=linux-amd64 ;;
+          Linux-ARM64) target=linux-arm64 ;;
+          macOS-ARM64) target=darwin-arm64 ;;
+          *) echo "::error::no tlua release for $RUNNER_OS $RUNNER_ARCH"; exit 1 ;;
+        esac
+        asset="tlua-$version-$target.tar.gz"
+        base="https://github.com/gh0st42/tlua/releases/download/v$version"
+        mkdir -p "$HOME/tlua-download"
+        cd "$HOME/tlua-download"
+        curl -fsSL -O "$base/$asset"
+        curl -fsSL -O "$base/SHA256SUMS"
+        want=$(awk -v a="$asset" '$2 == a || $2 == "*" a { print $1 }' SHA256SUMS)
+        if command -v sha256sum >/dev/null; then got=$(sha256sum "$asset" | awk '{ print $1 }')
+        else got=$(shasum -a 256 "$asset" | awk '{ print $1 }'); fi
+        if [ -z "$want" ] || [ "$want" != "$got" ]; then
+          echo "::error::the checksum of $asset is not the one tlua published"
+          exit 1
+        fi
+        tar xzf "$asset"
+        dir=$(dirname "$(find "$PWD" -name tlua -type f | head -n 1)")
+        echo "$dir" >> "$GITHUB_PATH"
+        "$dir/tlua" -v
