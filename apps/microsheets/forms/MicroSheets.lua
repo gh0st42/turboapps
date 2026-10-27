@@ -11,6 +11,7 @@ local workbook = require "workbook"
 local themes = require "themes"
 local report = require "forms.Report"
 local filterForm = require "forms.Filter"
+local rulesForm = require "forms.Rules"
 local chartForm = require "forms.ChartView"
 local helpForm = require "forms.FunctionHelp"
 local fnhelp = require "fnhelp"
@@ -391,6 +392,27 @@ local function filterDialog()
   grid:focus()
 end
 
+-- formatRules edits the conditional formatting of the sheet: colours that
+-- follow what the cells hold. A rule added is about the cells selected.
+local function formatRules()
+  if grid.entry then grid:commit() end
+  local r1, c1, r2, c2 = grid:selection()
+  local rules = rulesForm.ask(sheet().rules, { r1, c1, r2, c2 })
+  if rules then
+    grid.book:setRules(sheet(), rules)
+    grid:changed()
+    refresh()
+  end
+  grid:focus()
+end
+
+local function clearRules()
+  if #sheet().rules == 0 then return end
+  grid.book:setRules(sheet(), {}, "Clear Conditional Formatting")
+  grid:changed()
+  refresh()
+end
+
 local function renameSheet(i)
   i = i or grid.book.active
   local s = grid.book.sheets[i]
@@ -575,6 +597,8 @@ local actions = {
   mnuSortAsc = function() grid:sort(false) end,
   mnuSortDesc = function() grid:sort(true) end,
   mnuFilter = filterDialog,
+  mnuRules = formatRules,
+  mnuClearRules = clearRules,
   mnuClearFilter = function() grid:clearFilter() end,
   mnuChart = chart,
   mnuProfile = profile,

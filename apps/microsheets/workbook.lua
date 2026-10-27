@@ -14,6 +14,7 @@
 local zip = require "zip"
 local lfs = require "lfs"
 local book = require "book"
+local condfmt = require "condfmt"
 local csv = require "csv"
 local json = require "json"
 local formula = require "formula"
@@ -140,6 +141,7 @@ function M.encode(b, password)
       if px ~= book.DEFAULT_WIDTH then widths[formula.colName(c)] = px end
     end
     if next(widths) then entry.widths = widths end
+    if s.rules and #s.rules > 0 then entry.rules = condfmt.copyAll(s.rules) end
     files[#files + 1] = { entry.values, M.csvText(b, s) }
     manifest.sheets[i] = entry
   end
@@ -200,6 +202,12 @@ function M.decode(data, password)
       end
     end
     s.frozen = entry.frozen == true
+    if type(entry.rules) == "table" then
+      for _, t in ipairs(entry.rules) do
+        local rule = condfmt.clean(t)
+        if rule then s.rules[#s.rules + 1] = rule end
+      end
+    end
     if type(entry.widths) == "table" then
       for col, px in pairs(entry.widths) do
         if type(px) == "number" and col:find("^%a+$") then s.widths[formula.colIndex(col)] = math.max(book.MIN_WIDTH, px) end

@@ -1012,7 +1012,10 @@ gui.define {
       g:color(th.bg)
       g:fill(0, 0, W, H)
 
-      -- Cell backgrounds: the frozen row, the selection and search matches.
+      -- Cell backgrounds: the frozen row, conditional formatting, the
+      -- selection and search matches. What the rules say of each cell is
+      -- kept for its text.
+      local looks = {}
       for _, rw in ipairs(rws) do
         if rw.frozen then
           g:color(th.frozen)
@@ -1020,12 +1023,26 @@ gui.define {
         end
         for _, k in ipairs(cols) do
           local sel = selected(self, rw.r, k.c) and (r1 ~= r2 or c1 ~= c2)
+          local fx = bk:format(s, rw.r, k.c)
+          if fx then
+            looks[rw.r] = looks[rw.r] or {}
+            looks[rw.r][k.c] = fx
+          end
           if (matches[rw.r] and matches[rw.r][k.c]) then
             g:color(th.match)
             g:fill(k.x, rw.y, k.w, ROW)
           elseif sel then
             g:color(th.selection)
             g:fill(k.x, rw.y, k.w, ROW)
+          elseif fx then
+            if fx.fill then
+              g:color(fx.fill)
+              g:fill(k.x, rw.y, k.w - 1, ROW - 1)
+            end
+            if fx.bar then
+              g:color(fx.bar[2])
+              g:fill(k.x + 1, rw.y + 2, math.floor((k.w - 3) * fx.bar[1]), ROW - 5)
+            end
           end
         end
       end
@@ -1056,6 +1073,8 @@ gui.define {
               if formula.isError(val) then color, align = th.error, "center"
               elseif isF then color = th.formula
               elseif type(val) == "number" then color = th.number end
+              local fx = looks[r] and looks[r][k.c]
+              if fx and fx.color then color = fx.color end
               if not (self.showFormulas and isF) then
                 if type(val) == "number" then align = "right"
                 elseif type(val) == "boolean" then align = "center" end
@@ -1088,9 +1107,12 @@ gui.define {
               end
               shown = fit(measure, (shown:gsub("[\r\n\t]", " ")), w)
               g:color(color)
-              if rw.frozen then g:font("sans", size, "bold") end
+              local bold, italic = rw.frozen or (fx and fx.bold), fx and fx.italic
+              if bold or italic then
+                g:font("sans", size, bold and italic and "bold italic" or (bold and "bold" or "italic"))
+              end
               g:text(shown, k.x + PAD, rw.y, w, ROW, align)
-              if rw.frozen then g:font("sans", size) end
+              if bold or italic then g:font("sans", size) end
             end
           end
         end

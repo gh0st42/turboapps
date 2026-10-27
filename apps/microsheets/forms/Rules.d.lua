@@ -1,0 +1,37 @@
+---@meta
+-- What Rules.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.Rules: gui.Form
+---@field cboKind gui.ComboBox
+---@field cboScale gui.ComboBox
+---@field cboStyle gui.ComboBox
+---@field chkBold gui.CheckBox
+---@field chkColor gui.CheckBox
+---@field chkFill gui.CheckBox
+---@field chkItalic gui.CheckBox
+---@field cmdAdd gui.Button
+---@field cmdBar gui.Button
+---@field cmdCancel gui.Button
+---@field cmdColor gui.Button
+---@field cmdDelete gui.Button
+---@field cmdDown gui.Button
+---@field cmdFill gui.Button
+---@field cmdOK gui.Button
+---@field cmdUp gui.Button
+---@field lblA gui.Label
+---@field lblB gui.Label
+---@field lblBar gui.Label
+---@field lblHint gui.Label
+---@field lblKind gui.Label
+---@field lblLook gui.Label
+---@field lblRange gui.Label
+---@field lblS1 gui.Label
+---@field lblS2 gui.Label
+---@field lblS3 gui.Label
+---@field lblSample gui.Label
+---@field lblScale gui.Label
+---@field lstRules gui.ListBox
+---@field txtA gui.TextBox
+---@field txtB gui.TextBox
+---@field txtRange gui.TextBox

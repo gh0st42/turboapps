@@ -12,6 +12,7 @@
 -- the workbook changed and works the formulas out again.
 
 local formula = require "formula"
+local condfmt = require "condfmt"
 
 local M = {}
 local Book = {}
@@ -43,7 +44,7 @@ M.isFormula = isFormula
 ---------------------------------------------------------------- sheets
 
 local function newSheet(name)
-  return setmetatable({ name = name, cells = {}, widths = {}, frozen = false, rows = 0, cols = 0 }, Sheet)
+  return setmetatable({ name = name, cells = {}, widths = {}, frozen = false, rows = 0, cols = 0, rules = {} }, Sheet)
 end
 
 function Sheet:get(r, c)
@@ -227,6 +228,7 @@ end
 -- itself, through others or not, is #CIRC!.
 function Book:recalc()
   self.vals = {}
+  self.fmt = {} -- what conditional formatting works out, till the next change
   for _, s in ipairs(self.sheets) do
     self.vals[s] = {}
     if s.shrink then s:measure() s.shrink = nil end
@@ -289,7 +291,7 @@ local function copySheet(s)
   end
   local widths = {}
   for c, w in pairs(s.widths) do widths[c] = w end
-  return { sheet = s, name = s.name, cells = cells, widths = widths, frozen = s.frozen }
+  return { sheet = s, name = s.name, cells = cells, widths = widths, frozen = s.frozen, rules = condfmt.copyAll(s.rules) }
 end
 
 -- snapshot keeps the whole workbook, for a change too wide to keep cell
@@ -305,7 +307,7 @@ function Book:restore(snap)
   for i, k in ipairs(snap.sheets) do
     local s = k.sheet
     local copy = copySheet(k) -- keep the snapshot as it is, to restore again
-    s.name, s.cells, s.widths, s.frozen = k.name, copy.cells, copy.widths, k.frozen
+    s.name, s.cells, s.widths, s.frozen, s.rules = k.name, copy.cells, copy.widths, k.frozen, copy.rules
     s:measure()
     self.sheets[i] = s
   end
@@ -544,9 +546,32 @@ local function shiftCells(sheet, axis, at, count)
   sheet:measure()
 end
 
+-- shiftRules moves the conditional formatting of a sheet with its cells, and
+-- the formulas in the rules with the formulas in the cells.
+local function shiftRules(self, sheet, axis, at, count)
+  for _, s in ipairs(self.sheets) do
+    local keep = {}
+    for _, rule in ipairs(s.rules or {}) do
+      local alive = true
+      if s == sheet then alive = condfmt.shift(rule, axis, at, count) end
+      if alive then
+        for _, field in ipairs { "a", "b" } do
+          local raw = rule[field]
+          if isFormula(raw) and (rule.kind == "formula" or condfmt.byName[rule.kind].operands > 0) then
+            rule[field] = "=" .. formula.adjust(raw:sub(2), s.name, sheet.name, axis, at, count)
+          end
+        end
+        keep[#keep + 1] = rule
+      end
+    end
+    s.rules = keep
+  end
+end
+
 local function structural(self, sheet, axis, at, count, label)
   self:change(label, function()
     shiftCells(sheet, axis, at, count)
+    shiftRules(self, sheet, axis, at, count)
     self:rewriteAll(function(raw, s)
       return "=" .. formula.adjust(raw:sub(2), s.name, sheet.name, axis, at, count)
     end)
@@ -560,6 +585,7 @@ function Book:insertRows(sheet, at, n) structural(self, sheet, "row", at, n or 1
 function Book:insertBlock(sheet, at, block)
   self:change("Paste Rows", function()
     shiftCells(sheet, "row", at, block.h)
+    shiftRules(self, sheet, "row", at, block.h)
     self:rewriteAll(function(raw, s)
       return "=" .. formula.adjust(raw:sub(2), s.name, sheet.name, "row", at, block.h)
     end)
@@ -574,6 +600,27 @@ end
 function Book:deleteRows(sheet, at, n) structural(self, sheet, "row", at, -(n or 1), "Delete Rows") end
 function Book:insertCols(sheet, at, n) structural(self, sheet, "col", at, n or 1, "Insert Columns") end
 function Book:deleteCols(sheet, at, n) structural(self, sheet, "col", at, -(n or 1), "Delete Columns") end
+
+-- format is how conditional formatting colours a cell of sheet, or nil: see
+-- condfmt.lua for what it has.
+function Book:format(sheet, r, c)
+  local rules = sheet.rules
+  if not rules or #rules == 0 then return nil end
+  local look = self.fmt[sheet]
+  if not look then
+    look = condfmt.evaluator(self, sheet)
+    self.fmt[sheet] = look
+  end
+  return look(r, c)
+end
+
+-- setRules gives a sheet these rules of conditional formatting, as one step
+-- to undo.
+function Book:setRules(sheet, rules, label)
+  self:change(label or "Conditional Formatting", function()
+    sheet.rules = condfmt.copyAll(rules)
+  end, true, { sheet = sheet })
+end
 
 -- sort orders rows r1..r2 of columns c1..c2 by the values in column by:
 -- numbers, then text, then TRUE and FALSE, and empty cells last either

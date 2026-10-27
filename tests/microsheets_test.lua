@@ -643,6 +643,274 @@ test("an encrypted workbook needs its password", function()
   os.remove(path)
 end)
 
+---------------------------------------------------------------- conditional formatting
+
+local condfmt = require "condfmt"
+
+-- sheetOf makes a sheet of one column of numbers, and gives it, its book and a look at a cell.
+local function column(values)
+  local b, s = sheet({})
+  for i, v in ipairs(values) do s:put(i, 1, tostring(v)) end
+  b:recalc()
+  return b, s
+end
+
+test("conditional formatting: comparing, between, text and empty cells", function()
+  local b, s = column { 5, 12, 20, "apple", "Banana", 12 }
+  s:put(8, 1, "=A1*10") b:recalc()
+  local function hits(kind, a, bb)
+    local rule = condfmt.new(kind, 1, 1, 8, 1)
+    rule.a, rule.b = a or "", bb or ""
+    s.rules = { rule }
+    b.fmt = {}
+    local out = {}
+    for r = 1, 8 do if b:format(s, r, 1) then out[#out + 1] = r end end
+    return tostring(table.concat(out, ","))
+  end
+  eq(hits("greater", "10"), "2,3,6,8")
+  eq(hits("greaterEq", "12"), "2,3,6,8")
+  eq(hits("less", "12"), "1")
+  eq(hits("lessEq", "12"), "1,2,6")
+  eq(hits("equal", "12"), "2,6")
+  eq(hits("equal", "APPLE"), "4", "text, the case aside")
+  eq(hits("notEqual", "12"), "1,3,4,5,8")
+  eq(hits("between", "6", "20"), "2,3,6")
+  eq(hits("between", "20", "6"), "2,3,6", "either way round")
+  eq(hits("notBetween", "6", "20"), "1,8")
+  eq(hits("contains", "AN"), "5")
+  eq(hits("notContains", "an"), "1,2,3,4,6,8")
+  eq(hits("beginsWith", "ap"), "4")
+  eq(hits("endsWith", "ana"), "5")
+  eq(hits("empty"), "7")
+  eq(hits("notEmpty"), "1,2,3,4,5,6,8")
+  eq(hits("greater", "=A1"), "2,3,6,8", "against another cell")
+  eq(hits("greater", "x"), "", "nothing to compare with")
+end)
+
+test("conditional formatting: duplicates, top and bottom, average, errors and formulas", function()
+  local b, s = column { 3, 9, 3, 7, 9, 1 }
+  s:put(7, 1, "=1/0") s:put(8, 1, "=A1>A2") b:recalc()
+  local function hits(kind, extra)
+    local rule = condfmt.new(kind, 1, 1, 6, 1)
+    for k, v in pairs(extra or {}) do rule[k] = v end
+    s.rules = { rule }
+    b.fmt = {}
+    local out = {}
+    for r = 1, 6 do if b:format(s, r, 1) then out[#out + 1] = r end end
+    return tostring(table.concat(out, ","))
+  end
+  eq(hits("duplicate"), "1,2,3,5")
+  eq(hits("unique"), "4,6")
+  eq(hits("top", { n = 2 }), "2,5")
+  eq(hits("top", { n = 3 }), "2,4,5")
+  eq(hits("bottom", { n = 1 }), "6")
+  eq(hits("aboveAvg"), "2,4,5")
+  eq(hits("belowAvg"), "1,3,6")
+  eq(hits("error"), "", "outside the range")
+  local rule = condfmt.new("error", 1, 1, 8, 1)
+  s.rules = { rule } b.fmt = {}
+  ok(b:format(s, 7, 1) and not b:format(s, 8, 1), "the error is found")
+  -- A formula is written for the first cell and moved to the others.
+  s.rules = { condfmt.new("formula", 1, 1, 6, 1) }
+  s.rules[1].a = "=A1>5"
+  b.fmt = {}
+  local out = {}
+  for r = 1, 6 do if b:format(s, r, 1) then out[#out + 1] = r end end
+  eq(table.concat(out, ","), "2,4,5")
+  s.rules[1].a = "=A1=A$3"
+  b.fmt = {}
+  out = {}
+  for r = 1, 6 do if b:format(s, r, 1) then out[#out + 1] = r end end
+  eq(table.concat(out, ","), "1,3", "the formula's cells move with it")
+end)
+
+test("conditional formatting: colour scales, bars, and the first rule winning", function()
+  local b, s = column { 0, 50, 100, "x" }
+  local scale = condfmt.new("scale", 1, 1, 4, 1)
+  scale.scale = { "#000000", "#ffffff" }
+  s.rules = { scale } b.fmt = {}
+  eq(b:format(s, 1, 1).fill, "#000000")
+  eq(b:format(s, 2, 1).fill, "#808080")
+  eq(b:format(s, 3, 1).fill, "#ffffff")
+  eq(b:format(s, 4, 1), nil, "text has no colour")
+  scale.scale = { "#ff0000", "#00ff00", "#0000ff" }
+  b.fmt = {}
+  eq(b:format(s, 1, 1).fill, "#ff0000"); eq(b:format(s, 2, 1).fill, "#00ff00"); eq(b:format(s, 3, 1).fill, "#0000ff")
+  eq(b:format(s, 1, 1).fill, "#ff0000")
+  local bar = condfmt.new("bar", 1, 1, 4, 1)
+  s.rules = { bar } b.fmt = {}
+  eq(b:format(s, 1, 1), nil, "zero has no bar")
+  eq(b:format(s, 2, 1).bar[1], 0.5); eq(b:format(s, 3, 1).bar[1], 1); eq(b:format(s, 3, 1).bar[2], bar.bar)
+  -- The rule higher up says what it says; the next fills in the rest.
+  local red = condfmt.new("greater", 1, 1, 4, 1); red.a = "40"
+  red.style = { fill = "#ff0000" }
+  local bold = condfmt.new("greater", 1, 1, 4, 1); bold.a = "10"
+  bold.style = { fill = "#00ff00", bold = true }
+  s.rules = { red, bold } b.fmt = {}
+  local fx = b:format(s, 3, 1)
+  eq(fx.fill, "#ff0000"); eq(fx.bold, true)
+  fx = b:format(s, 1, 1)
+  eq(fx, nil)
+  eq(condfmt.mix("#000000", "#ffffff", 0.5), "#808080")
+end)
+
+test("conditional formatting: ranges, words and cleaning what a file had", function()
+  eq(select(1, condfmt.parseRange("b2:d9")), 2); eq(select(4, condfmt.parseRange("D9:B2")), 4, "in order")
+  eq(select(1, condfmt.parseRange("$A$1")), 1)
+  eq(condfmt.parseRange("nonsense"), nil)
+  local r = condfmt.new("between", 2, 3, 9, 4)
+  r.a, r.b = "1", "5"
+  eq(condfmt.rangeName(r), "C2:D9"); eq(condfmt.describe(r), "Between 1 and 5")
+  eq(condfmt.describe(condfmt.new("empty", 1, 1, 1, 1)), "Is empty")
+  eq(condfmt.rangeName(condfmt.new("empty", 1, 1, 1, 1)), "A1")
+  local top = condfmt.new("top", 1, 1, 5, 1); top.n = 3
+  eq(condfmt.describe(top), "In the top 3")
+  eq(condfmt.clean({ kind = "nope", r1 = 1, c1 = 1, r2 = 1, c2 = 1 }), nil)
+  eq(condfmt.clean({ kind = "greater", r1 = 0, c1 = 1, r2 = 1, c2 = 1 }), nil)
+  eq(condfmt.clean("x"), nil)
+  local c = condfmt.clean({ kind = "greater", r1 = 5, c1 = 3, r2 = 1, c2 = 1, a = 7, style = { fill = "red", color = "#112233", bold = true } })
+  eq(c.r1, 1); eq(c.r2, 5); eq(c.a, "7"); eq(c.style.fill, nil, "a colour is #rrggbb"); eq(c.style.color, "#112233"); eq(c.style.bold, true)
+  eq(#condfmt.clean({ kind = "scale", r1 = 1, c1 = 1, r2 = 1, c2 = 1, scale = { "#000000" } }).scale, 3, "a bad scale is the first one")
+end)
+
+test("conditional formatting: kept with the workbook, in undo, and moved with the cells", function()
+  local b, s = column { 1, 2, 3, 4, 5 }
+  local rule = condfmt.new("greater", 2, 1, 5, 1)
+  rule.a = "2"
+  rule.style = { fill = "#ffc7ce", color = "#9c0006" }
+  b:setRules(s, { rule })
+  ok(b.dirty)
+  eq(#s.rules, 1); ok(b:format(s, 3, 1), "colours 3"); eq(b:format(s, 2, 1), nil)
+  rule.a = "100" -- the book has its own copy
+  ok(b:format(s, 3, 1), "still")
+  -- Saved and read again.
+  local again = assert(workbook.decode(assert(workbook.encode(b))))
+  local r = again.sheets[1].rules[1]
+  eq(r.kind, "greater"); eq(r.a, "2"); eq(r.r1, 2); eq(r.style.fill, "#ffc7ce")
+  ok(again:format(again.sheets[1], 3, 1))
+  local plain = assert(workbook.decode(assert(workbook.encode(book.new()))))
+  eq(#plain.sheets[1].rules, 0)
+  -- Undo and redo.
+  b:undo()
+  eq(#s.rules, 0); eq(b:format(s, 3, 1), nil)
+  b:redo()
+  eq(#s.rules, 1); ok(b:format(s, 3, 1))
+  -- A row put in above moves the rule down, and one taken out shrinks it.
+  b:insertRows(s, 1, 2)
+  eq(s.rules[1].r1, 4); eq(s.rules[1].r2, 7)
+  b:deleteRows(s, 5, 2)
+  eq(s.rules[1].r1, 4); eq(s.rules[1].r2, 5)
+  b:deleteRows(s, 1, 10)
+  eq(#s.rules, 0, "a rule with no cells left goes")
+  -- A formula the rule compares with follows its cell.
+  b:undo()
+  s.rules[1].a = "=$F$1"
+  b:insertCols(s, 1, 1)
+  eq(s.rules[1].a, "=$G$1"); eq(s.rules[1].c1, 2)
+end)
+
+test("form: the dialog adds, changes and orders rules, and the grid shows them", function()
+  local gui = require "gui"
+  local rulesForm = require "forms.Rules"
+  fresh(false)
+  local s = grid:sheet()
+  for i, v in ipairs { 4, 15, 8, 23 } do grid.book:set(s, i, 1, tostring(v)) end
+  -- Select A1:A4 and open the dialog; a new rule is about the selection.
+  grid:moveTo(1, 1)
+  grid:moveTo(4, 1, nil, nil, true)
+  rulesForm.prepare({}, { grid:selection() })
+  eq(#rulesForm.lstRules.items, 0); eq(rulesForm.cmdDelete.enabled, false)
+  rulesForm.cmdAdd:fire("onClick")
+  eq(#rulesForm.lstRules.items, 1)
+  eq(rulesForm.lstRules.items[1], "A1:A4   Greater than 0")
+  rulesForm.txtA.text = "10"
+  rulesForm.txtA:fire("onChange")
+  eq(rulesForm.lstRules.items[1], "A1:A4   Greater than 10")
+  -- Another kind shows what it needs.
+  rulesForm.cmdAdd:fire("onClick")
+  rulesForm.cboKind.selected = condfmt.byName.between.index
+  rulesForm.cboKind:fire("onChange")
+  eq(rulesForm.txtB.visible, true); eq(rulesForm.lblB.visible, true)
+  rulesForm.txtA.text, rulesForm.txtB.text = "5", "9"
+  rulesForm.txtA:fire("onChange") rulesForm.txtB:fire("onChange")
+  eq(rulesForm.lstRules.items[2], "A1:A4   Between 5 and 9")
+  rulesForm.cboKind.selected = condfmt.byName.scale.index
+  rulesForm.cboKind:fire("onChange")
+  eq(rulesForm.cboScale.visible, true); eq(rulesForm.cboStyle.visible, false)
+  rulesForm.cboKind.selected = condfmt.byName.bar.index
+  rulesForm.cboKind:fire("onChange")
+  eq(rulesForm.cmdBar.visible, true)
+  rulesForm.cboKind.selected = condfmt.byName.top.index
+  rulesForm.cboKind:fire("onChange")
+  eq(rulesForm.lblA.caption, "How many:")
+  rulesForm.txtA.text = "2"
+  rulesForm.txtA:fire("onChange")
+  eq(rulesForm.lstRules.items[2], "A1:A4   In the top 2")
+  -- The look: a ready-made one, a colour, and a range that is not one.
+  rulesForm.cboStyle.selected = 3
+  rulesForm.cboStyle:fire("onChange")
+  eq(rulesForm.chkFill.checked, true); eq(rulesForm.cmdFill.color, "#c6efce")
+  local realColour = gui.choosecolor
+  gui.choosecolor = function() return "#123456" end
+  rulesForm.cmdFill:fire("onClick")
+  gui.choosecolor = realColour
+  eq(rulesForm.cmdFill.color, "#123456"); eq(rulesForm.cboStyle.selected, #condfmt.STYLES + 1, "custom now")
+  rulesForm.chkBold.checked = true
+  rulesForm.chkBold:fire("onChange")
+  rulesForm.txtRange.text = "B1:B3"
+  rulesForm.txtRange:fire("onChange")
+  eq(rulesForm.lstRules.items[2], "B1:B3   In the top 2")
+  rulesForm.txtRange.text = "garbage"
+  rulesForm.txtRange:fire("onChange")
+  eq(rulesForm.lstRules.items[2], "B1:B3   In the top 2", "it keeps the last good range")
+  -- Order, and OK gives the rules back.
+  rulesForm.cmdUp:fire("onClick")
+  eq(rulesForm.lstRules.items[1], "B1:B3   In the top 2")
+  rulesForm.cmdDown:fire("onClick")
+  eq(rulesForm.lstRules.items[2], "B1:B3   In the top 2")
+  rulesForm.lstRules.selected = 1
+  rulesForm.lstRules:fire("onChange")
+  rulesForm.cmdOK:fire("onClick")
+  local made = rulesForm.result()
+  eq(#made, 2); eq(made[1].a, "10"); eq(made[2].style.fill, "#123456"); eq(made[2].style.bold, true)
+  -- Cancelled gives nothing; delete takes one away.
+  rulesForm.prepare(made, { 1, 1, 1, 1 })
+  rulesForm.cmdDelete:fire("onClick")
+  eq(#rulesForm.lstRules.items, 1)
+  rulesForm.cmdCancel:fire("onClick")
+  eq(rulesForm.result(), nil)
+  -- The form's menu does it for the sheet, in one step of undo; the rules
+  -- are painted by the grid.
+  rulesForm.ask = function(list, range)
+    eq(#list, 0)
+    eq(range[1], 1); eq(range[3], 4)
+    local rule = condfmt.new("greater", 1, 1, 4, 1)
+    rule.a = "10"
+    return { rule }
+  end
+  frm.Menu1:fire("onClick", "mnuRules", "", nil)
+  eq(#s.rules, 1)
+  grid:moveTo(10, 4) -- the selection is shown in its own colour
+  local function count(color)
+    local img = grid:snapshot()
+    local n = 0
+    local want = { tonumber(color:sub(2, 3), 16), tonumber(color:sub(4, 5), 16), tonumber(color:sub(6, 7), 16) }
+    for y = 0, img.height - 1, 2 do
+      for x = 0, img.width - 1, 2 do
+        local r, g, b2 = img:get(x, y)
+        if r == want[1] and g == want[2] and b2 == want[3] then n = n + 1 end
+      end
+    end
+    return n
+  end
+  ok(count("#ffc7ce") > 20, "the fill is drawn under the numbers over 10")
+  frm.Menu1:fire("onClick", "mnuClearRules", "", nil)
+  eq(#s.rules, 0); eq(count("#ffc7ce"), 0)
+  grid.book:undo()
+  eq(#s.rules, 1); ok(count("#ffc7ce") > 20, "undo brings them back")
+  rulesForm.ask = nil
+end)
+
 test("chart data", function()
   local charts = require "controls.Chart"
   local b, s = sheet({ { "Region", "Q1", "Q2" }, { "North", "10", "12" }, { "South", "8", "x" } })
