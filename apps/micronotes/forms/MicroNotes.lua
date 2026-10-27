@@ -246,13 +246,40 @@ local function changed()
   end
 end
 
--- setPassword encrypts the notebook, all of it, from its next save; an
--- empty password takes the encryption off.
-local function setPassword()
-  local pw = gui.passwordbox("Password for this notebook.\nLeave it empty to remove the password.", "Set Password", true)
-  if not pw then return end
-  nb.password = pw ~= "" and pw or nil
+-- usePassword gives the notebook a password (nil: none), and writes it to its
+-- file at once when it has one, so that the file is not left as it was.
+local function usePassword(pw)
+  nb.password = pw
   changed()
+  local said = pw and "encrypted with the new password" or "not encrypted any more"
+  if path then
+    flush()
+    if not saveTo(path) then return end
+    said = said .. ", and saved"
+  else
+    said = said .. " when it is saved"
+  end
+  updateTitle()
+  updateStatus(said)
+end
+
+-- setPassword encrypts the notebook, all of it, with a password asked for
+-- twice; an empty one takes the encryption off.
+local function setPassword()
+  local pw = gui.passwordbox("Password for this notebook" .. (nb.password and " (it has one now: this replaces it)" or "")
+    .. ".\nLeave it empty to remove the password.", nb.password and "Change Password" or "Set Password", true)
+  if not pw then return end
+  usePassword(pw ~= "" and pw or nil)
+end
+
+local function removePassword()
+  if not nb.password then
+    gui.msgbox("This notebook has no password.", "ok", "Remove Password")
+    return
+  end
+  if gui.msgbox("Take the password off this notebook?\n\nIts file will not be encrypted any more.", "yesno", "Remove Password") == "yes" then
+    usePassword(nil)
+  end
 end
 
 ---------------------------------------------------------------- finding in a note
@@ -1038,6 +1065,7 @@ local actions = {
     if file then openPath(file) end
   end,
   mnuPassword = setPassword,
+  mnuRemovePassword = removePassword,
   mnuSave = save,
   mnuSaveAs = saveAs,
   mnuImport = function()

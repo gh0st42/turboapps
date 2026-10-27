@@ -509,9 +509,31 @@ test("form: an encrypted notebook needs its password, and keeps it", function()
   ok(frm.saveTo(file))
   eq(select(3, notebook.load(file)), "locked")
   ok(notebook.load(file, "pw") ~= nil)
+  -- Changing it writes the file at once; Remove Password asks, and then does.
+  gui.passwordbox = function() return "second" end
+  frm.actions.mnuPassword()
+  eq(select(3, notebook.load(file, "pw")), "locked", "the old password no longer opens it")
+  ok(notebook.load(file, "second") ~= nil, "the new one does")
+  ok(frm.lblStatus.caption:find("and saved", 1, true), frm.lblStatus.caption)
+  local realMsg = gui.msgbox
+  gui.msgbox = function() return "no" end
+  frm.actions.mnuRemovePassword()
+  eq(select(3, notebook.load(file)), "locked", "refused: still encrypted")
+  gui.msgbox = function() return "yes" end
+  frm.actions.mnuRemovePassword()
+  ok(notebook.load(file) ~= nil, "readable without one")
+  ok(not frm.caption:find("encrypted", 1, true), frm.caption)
+  local said
+  gui.msgbox = function(text) said = text return "ok" end
+  frm.actions.mnuRemovePassword()
+  ok(said:find("no password"), said)
+  gui.msgbox = realMsg
+  -- An empty password in Set Password takes it off as well.
+  gui.passwordbox = function() return "again" end
+  frm.actions.mnuPassword()
+  eq(select(3, notebook.load(file)), "locked")
   gui.passwordbox = function() return "" end
   frm.actions.mnuPassword()
-  ok(frm.saveTo(file))
   ok(notebook.load(file) ~= nil, "readable without one")
   gui.passwordbox = realBox
   os.remove(file)
