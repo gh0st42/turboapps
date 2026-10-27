@@ -195,6 +195,19 @@ what it is and how it is used. UI text is plain English, without jargon.
   pages, the file's `history`), shows it in forms/History.lua, and finds in
   a bar over the page. imageviewer turns and flips what it shows with
   png's `rotate` and `flip` (the next tlua); the file is never changed.
+- microbrowser connects to a name the way a browser does (net.lua's
+  `connect`: every address `socket.dns.getaddrinfo` gives, the families taking
+  turns, the next tried when one is slow for a quarter of a second), because
+  tlua's `tcp:connect(name)` with a timeout of 0 stays on the first, and a
+  host with an IPv6 address that does not lead anywhere (wolf.binarylab.eu)
+  timed out. Downloads (download.lua, forms/Downloads.lua) are a request's
+  `download` hook giving a sink: the job lets go of its tab and goes on into
+  a file; tests hold one open with `hold()` rather than race a fast server.
+- microsheets' conditional formatting is condfmt.lua (rules kept on
+  `sheet.rules`, evaluated by `Book:format`, which the Grid asks for each cell
+  it draws), changed with `Book:setRules` as one step of undo, moved with
+  rows and columns by `shiftRules`, and kept in the .zms manifest under each
+  sheet's `rules`. A selected cell shows the selection's colour, not a rule's.
 - microword and micronotes edit tables in place: MarkdownEdit puts the caret
   in a cell (`ed.cell`), where typing, the arrows, Tab and Enter work, and
   `ed:insertTable`, `insertRow`, `insertColumn`, `deleteRow`, `deleteColumn`
