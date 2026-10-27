@@ -13,6 +13,8 @@ local png = require "png"
 local look = require "look"
 local bookmarksForm = require "forms.Bookmarks"
 local historyForm = require "forms.History"
+local download = require "download"
+local downloadsForm = require "forms.Downloads"
 
 local frm = gui.load "MicroBrowser" --[[@as forms.MicroBrowser]]
 local view, address, bar = frm.vwPage, frm.txtAddress, frm.tabBar
@@ -218,6 +220,68 @@ local function trust(hostport, fingerprint)
   return verdict ~= "changed"
 end
 
+---------------------------------------------------------------- downloads
+
+-- SHOWN are the Gopher item types a page is made of; the others are files.
+local SHOWN = { ["0"] = true, ["1"] = true, ["7"] = true, h = true, ["3"] = true,
+  g = true, I = true, p = true, [":"] = true }
+
+-- wantsFile says whether an answer is a file to download rather than a page
+-- (or a picture) to show: Gemini by its type, Gopher by its item's.
+local function wantsFile(job)
+  local u = job.parsed
+  if u.scheme == "gopher" then return not SHOWN[u.type] end
+  local kind = (job.meta ~= "" and job.meta or "text/gemini"):lower():match("^%s*([^;%s]+)") or ""
+  return not (kind:find("^text/") or kind:find("^image/"))
+end
+
+-- startFile is the hook of a request: a file is written to disk as it comes
+-- (the job goes on without its tab), and nothing is given for a page.
+local function startFile(job, force)
+  if not (force or wantsFile(job)) then return nil end
+  local d = download.begin(job, download.folder(settings.downloadDir), lastName(job.url, "download"))
+  if not d then return nil end
+  job.detached = d
+  status(("Downloading %s…  (View > Downloads shows how it goes)"):format(d.name))
+  return d.sink
+end
+
+local loose = {} -- requests for files that no tab asked for, until they have a file
+
+local function downloadLink(url, redirects)
+  local u = net.parse(url)
+  if not u or (u.scheme ~= "gemini" and u.scheme ~= "gopher") then
+    status("Only Gemini and Gopher files can be downloaded here")
+    return false
+  end
+  local job = net.request(u.url, { trust = trust, download = function(j) return startFile(j, true) end })
+  job.redirects = redirects or 0
+  loose[#loose + 1] = job
+  status("Downloading " .. lastName(u.url, "the file") .. "…")
+  startTimer()
+  return true
+end
+
+-- looseDone says what became of a request for a file that was not one.
+local function looseDone(job)
+  local name = lastName(job.url, "the file")
+  if job.err then
+    status(job.untrusted and (name .. ": its certificate changed, open the page first")
+      or ("Could not download " .. name .. ": " .. job.err))
+    return
+  end
+  local class = math.floor((job.status or 0) / 10)
+  if class == 3 then
+    if job.redirects >= 5 then status(name .. ": too many redirects") return end
+    downloadLink(net.absolute(job.url, job.meta), job.redirects + 1)
+  elseif class == 2 then
+    local d = download.save(download.folder(settings.downloadDir), name, job.body)
+    status(d and ("Saved " .. d.name) or "Could not save " .. name)
+  else
+    status(("%s: %s"):format(name, job.meta ~= "" and job.meta or ("answer " .. tostring(job.status))))
+  end
+end
+
 local navigate
 
 -- navigate takes a tab to an address. opts.push keeps the page it is on
@@ -252,7 +316,7 @@ navigate = function(t, url, opts)
   end
   t.target = u.url
   t.opts = opts
-  t.job = net.request(u.url, { trust = trust })
+  t.job = net.request(u.url, { trust = trust, download = startFile })
   refresh(t)
   if t == tab() then status("Connecting to " .. u.host .. "…") end
   startTimer()
@@ -315,8 +379,12 @@ local function arrived(t, job)
           status = ("Picture, %d × %d, %s"):format(pic.width, pic.height, kb) }, opts.push)
       else
         refresh(t)
-        t.download = { url = url, body = job.body, name = lastName(url, "download") }
-        if t == tab() then frm.save(t.download) end
+        local d = download.save(download.folder(settings.downloadDir), lastName(url, "download"), job.body)
+        if d then status("Saved " .. d.name .. " in " .. download.folder(settings.downloadDir))
+        else
+          t.download = { url = url, body = job.body, name = lastName(url, "download") }
+          if t == tab() then frm.save(t.download) end
+        end
       end
     end
     return
@@ -347,8 +415,12 @@ local function arrived(t, job)
           status = ("%s, %d × %d, %s"):format(kind, pic.width, pic.height, kb) }, opts.push)
       else
         refresh(t)
-        t.download = { url = url, body = job.body, name = lastName(url, "download") }
-        if t == tab() then frm.save(t.download) end
+        local d = download.save(download.folder(settings.downloadDir), lastName(url, "download"), job.body)
+        if d then status("Saved " .. d.name .. " in " .. download.folder(settings.downloadDir))
+        else
+          t.download = { url = url, body = job.body, name = lastName(url, "download") }
+          if t == tab() then frm.save(t.download) end
+        end
       end
     end
   elseif class == 3 then
@@ -368,30 +440,57 @@ local function arrived(t, job)
   end
 end
 
--- poll moves every request on; false when none is left.
+-- poll moves every request on; false when none is left. A request that
+-- turned out to be a file is let go of by its tab, which shows the page it
+-- had, and goes on on its own, into a file.
 poll = function()
   local busy = false
   for _, t in ipairs(tabs) do
     local job = t.job
     if job then
-      if job:poll() then
+      local done = job:poll()
+      if job.detached and t.job == job then
+        t.job, t.target = nil, nil
+        refresh(t)
+        if t == tab() then
+          status(("Downloading %s…  (View > Downloads shows how it goes)"):format(job.detached.name))
+        end
+      elseif done then
         if t.job == job then arrived(t, job) end
+      elseif t == tab() then
+        busy = true
+        local host = job.parsed and job.parsed.host or ""
+        if job.state == "receiving" then
+          status(("Receiving from %s… %.1f KB"):format(host, job.received / 1024))
+        elseif job.state == "handshake" then
+          status("Securing the connection to " .. host .. "…")
+        else
+          status("Connecting to " .. host .. "…")
+        end
       else
         busy = true
-        if t == tab() then
-          local host = job.parsed and job.parsed.host or ""
-          if job.state == "receiving" then
-            status(("Receiving from %s… %.1f KB"):format(host, job.received / 1024))
-          elseif job.state == "handshake" then
-            status("Securing the connection to " .. host .. "…")
-          else
-            status("Connecting to " .. host .. "…")
-          end
-        end
       end
     end
     busy = busy or t.job ~= nil
   end
+  -- Requests for files that no tab asked for.
+  local i = 1
+  while i <= #loose do
+    local job = loose[i]
+    local done = job:poll()
+    if job.detached then
+      table.remove(loose, i)
+    elseif done then
+      table.remove(loose, i)
+      looseDone(job)
+    else
+      i = i + 1
+    end
+  end
+  busy = busy or #loose > 0
+  -- The files coming in.
+  if download.poll() then busy = true end
+  downloadsForm.tick()
   return busy
 end
 
@@ -618,6 +717,12 @@ local function clearHistory()
   updateMenu()
 end
 
+-- showDownloads opens the window that lists the downloads.
+local function showDownloads()
+  downloadsForm.attach(settings)
+  downloadsForm.open()
+end
+
 local function manageBookmarks()
   local url = bookmarksForm.manage(settings)
   store.save(settings)
@@ -724,6 +829,7 @@ local function linkMenu()
   if hovered then
     local url = hovered
     items[#items + 1] = { "Open Link in New &Tab", function() newTab(url, true) end }
+    items[#items + 1] = { "&Download Link", function() downloadLink(url) end }
     items[#items + 1] = { "&Copy Link Address", function() gui.clipboard(url) end }
     items[#items + 1] = "-"
   end
@@ -831,6 +937,7 @@ local actions = {
   mnuFindNext = function() findNext(false) end,
   mnuFindPrev = function() findNext(true) end,
   mnuHistory = function() showHistory() end,
+  mnuDownloads = showDownloads,
   mnuClearHistory = function() clearHistory() end,
   mnuReload = reload,
   mnuStop = stop,
@@ -868,6 +975,13 @@ end
 
 -- What is open is kept for next time.
 function frm:onClose()
+  if download.active() > 0 and gui.msgbox("Downloads are still coming in.\n\nStop them, and take away what came?",
+    "yesno", "microbrowser") ~= "yes" then
+    return false
+  end
+  if downloadsForm.visible then downloadsForm:close() end
+  -- What is still coming in is stopped, and its half a file taken away.
+  for _, d in ipairs(download.list) do download.cancel(d) end
   local open = {}
   for _, t in ipairs(tabs) do
     local url = t.target or (t.entry and t.entry.url) or t.lazy
@@ -902,6 +1016,8 @@ gui.after(0, function() view:focus() end)
 
 -- Exposed for the tests.
 frm.poll = poll
+frm.downloadLink = downloadLink
+frm.showDownloads = showDownloads
 frm.open, frm.newTab, frm.closeTab, frm.pick = open, newTab, closeTab, select
 frm.back, frm.forward, frm.reload, frm.stop, frm.up = back, forward, reload, stop, up
 frm.bookmark = bookmark

@@ -78,6 +78,39 @@ end
 
 local servers = {}
 
+-- hold is a Gopher server that sends the start of a file and then waits, the
+-- connection open, until it is let go: a download that is going on for as
+-- long as a test needs it to be.
+local function hold()
+  local srv = assert(socket.bind("127.0.0.1", 0))
+  srv:settimeout(0)
+  local _, port = srv:getsockname()
+  local h = { port = tonumber(port), conns = {}, released = false }
+  function h.step()
+    local c = srv:accept()
+    if c then
+      c:settimeout(0)
+      h.conns[#h.conns + 1] = { sock = c, sent = false }
+    end
+    for i = #h.conns, 1, -1 do
+      local k = h.conns[i]
+      if not k.sent then
+        local line = k.sock:receive("*l")
+        if line then
+          k.sock:send(("0123456789abcdef"):rep(100))
+          k.sent = true
+        end
+      elseif h.released then
+        k.sock:send(("0123456789abcdef"):rep(100))
+        k.sock:close()
+        table.remove(h.conns, i)
+      end
+    end
+  end
+  function h.release() h.released = true end
+  return h
+end
+
 -- pump runs the servers and a poll until the poll says it is done.
 local function pump(poll)
   for _ = 1, 3000 do
@@ -108,6 +141,7 @@ local gopherSrv = server(function(line)
   if sel == "/things" then return "iThings\tfake\t(NULL)\t0\r\n.\r\n" end
   if sel == "/search" then return "iYou searched for " .. words .. "\tfake\t(NULL)\t0\r\n.\r\n" end
   if sel == "/file.bin" then return "\0\1\2binary" end
+  if sel == "/big.bin" then return ("0123456789abcdef"):rep(20000) end
   return "3Not here\t\terror.host\t1\r\n.\r\n"
 end)
 servers[1] = gopherSrv
@@ -129,6 +163,9 @@ local geminiSrv = server(function(line)
     return "20 image/png\r\n" .. require("png").new(4, 3, "#ff0000"):encode()
   end
   if path == "/cert" then return "60 Show me yours\r\n" end
+  if path == "/file.zip" then return "20 application/zip\r\nPK-not-really-a-zip" end
+  if path == "/get" then return "31 /file.zip\r\n" end
+  if path == "/big.dat" then return "20 application/octet-stream\r\n" .. ("0123456789abcdef"):rep(20000) end
   return "51 Not found\r\n"
 end, 1)
 servers[2] = geminiSrv
@@ -409,12 +446,13 @@ test("form: Gopher menus, searches, texts and downloads", function()
   go(H .. "/0/about.txt")
   ok(view.text:find("This is a test."), view.text)
   eq(current().entry.name, "about.txt.txt")
+  frm.settings().downloadDir = root
   go(H .. "/9/file.bin")
-  eq(saved, "file.bin")
   local f = io.open(root .. "/file.bin", "rb")
   eq(f:read("*a"), "\0\1\2binary")
   f:close()
   eq(current().entry.url, H .. "/0/about.txt", "a download leaves the page as it was")
+  os.remove(root .. "/file.bin")
 end)
 
 test("form: tabs", function()
@@ -695,6 +733,197 @@ test("form: the find bar finds in the page, forwards and back, and counts", func
   ok(frm.lblStatus.caption:find("“tab”"), frm.lblStatus.caption)
   frm.Menu1:fire("onClick", "mnuFindPrev", "", nil)
   eq(view:selectedText():lower(), "tab")
+end)
+
+test("net: a name's addresses are tried in turn, the families taking turns", function()
+  local function order(list)
+    local out = {}
+    for i, a in ipairs(net.interleave(list)) do out[i] = a.addr end
+    return table.concat(out, " ")
+  end
+  eq(order { { family = "inet6", addr = "a6" }, { family = "inet", addr = "a4" } }, "a6 a4")
+  eq(order { { family = "inet6", addr = "a" }, { family = "inet6", addr = "b" }, { family = "inet", addr = "c" },
+    { family = "inet", addr = "d" } }, "a c b d")
+  eq(order { { family = "inet", addr = "x" } }, "x")
+  eq(order {}, "")
+  -- A name that leads first to an address nobody listens on (localhost is
+  -- ::1 first on some systems, and the servers here are on 127.0.0.1) still
+  -- gets through, by the next one.
+  local job = fetch("gopher://localhost:" .. gopherSrv.port .. "/0/about.txt")
+  eq(job.err, nil)
+  eq(job.body, "This is a test.\r\nLine two.\r\n.\r\n")
+end)
+
+test("net: a file is given to a sink as it comes, and its answer is not kept", function()
+  local got, pieces = {}, 0
+  local function sink(chunk) pieces = pieces + 1 got[#got + 1] = chunk return true end
+  local job = fetch(H .. "/9/big.bin", { download = function(j) eq(j.parsed.type, "9") return sink end })
+  eq(job.err, nil); eq(job.streamed, true); eq(job.body, "")
+  eq(#table.concat(got), 320000); eq(job.received, 320000)
+  ok(pieces > 1, "in pieces")
+  -- Gemini: the header is read first, and the hook sees its type.
+  got, pieces = {}, 0
+  local seen
+  job = fetch(G .. "/big.dat", { download = function(j) seen = j.meta return sink end })
+  eq(seen, "application/octet-stream"); eq(job.status, 20); eq(job.streamed, true)
+  eq(#table.concat(got), 320000)
+  -- A hook that gives no sink leaves the answer to be kept, as before.
+  job = fetch(G .. "/file.zip", { download = function() return nil end })
+  eq(job.streamed, false); eq(job.body, "PK-not-really-a-zip")
+  -- It is asked only about a success, and a sink that fails stops it.
+  local asked = false
+  job = fetch(G .. "/nothing", { download = function() asked = true end })
+  eq(asked, false); eq(job.status, 51)
+  job = fetch(H .. "/9/big.bin", { download = function() return function() return nil, "disk full" end end })
+  eq(job.err, "disk full")
+end)
+
+test("download: names, files that arrive, and what a stop leaves", function()
+  local download = require "download"
+  local dir = root .. "/dl"
+  require("lfs").mkdir(dir)
+  eq(download.folder(dir), dir)
+  eq(download.uniquePath(dir, "a.txt"), dir .. "/a.txt")
+  local f = io.open(dir .. "/a.txt", "w") f:write("x") f:close()
+  eq(download.uniquePath(dir, "a.txt"), dir .. "/a (2).txt")
+  ok(not download.uniquePath(dir, "../x"):find("/../", 1, true), "no way out of the folder")
+  download.list = {}
+  local changes = 0
+  download.onChange = function() changes = changes + 1 end
+  local job = net.request(H .. "/9/big.bin", { download = function(j)
+    local d = assert(download.begin(j, dir, "big.bin"))
+    return d.sink
+  end })
+  local d
+  local n = 0
+  pump(function()
+    n = n + 1
+    local busy = download.poll()
+    if not job.done then job:poll() end
+    d = download.list[1]
+    return not busy and job.done
+  end)
+  eq(d.state, "done"); eq(d.received, 320000)
+  eq(#io.open(d.path, "rb"):read("*a"), 320000)
+  ok(changes >= 2, "told when it began and when it ended")
+  ok(download.describe(d):find("done, 312 KB", 1, true), download.describe(d))
+  -- Stopped: the half is taken away.
+  local waiting = hold()
+  servers[#servers + 1] = waiting
+  local j2 = net.request("gopher://127.0.0.1:" .. waiting.port .. "/9/x", { download = function(j)
+    return assert(download.begin(j, dir, "stopme.bin")).sink
+  end })
+  repeat for _, sv in ipairs(servers) do sv.step() end j2:poll() until download.list[2] and download.list[2].received > 0
+  local d2 = download.list[2]
+  eq(d2.state, "receiving"); eq(download.active(), 1)
+  download.cancel(d2)
+  eq(d2.state, "stopped"); eq(download.active(), 0)
+  ok(not require("lfs").attributes(d2.path), "the half file is gone")
+  table.remove(servers)
+  -- Failed ones are taken away too; a body that is here is saved at once.
+  local saved2 = download.save(dir, "here.txt", "body")
+  eq(saved2.state, "done"); eq(io.open(saved2.path):read("*a"), "body")
+  download.remove(d2)
+  eq(#download.list, 2)
+  download.clear()
+  eq(#download.list, 0)
+  download.onChange = nil
+end)
+
+test("form: a file goes on in the background, and the tab keeps its page", function()
+  local download = require "download"
+  local dl = require "forms.Downloads"
+  local dir = root .. "/formdl"
+  require("lfs").mkdir(dir)
+  local s = frm.settings()
+  s.downloadDir = dir
+  s.known = {}
+  download.list = {}
+  go(H .. "/0/about.txt")
+  local page = current().entry.url
+  -- Gopher: a binary item streams to the folder, and the tab is free at once.
+  frm.open(H .. "/9/big.bin")
+  local t = current()
+  local steps = 0
+  repeat
+    for _, sv in ipairs(servers) do sv.step() end
+    frm.poll()
+    steps = steps + 1
+  until t.job == nil or steps > 3000
+  eq(t.job, nil, "the tab let go of it")
+  eq(t.entry.url, page, "and shows the page it had")
+  eq(download.list[1].name, "big.bin")
+  ok(frm.cmdStop.visible == false, "not loading")
+  repeat for _, sv in ipairs(servers) do sv.step() end until not frm.poll()
+  eq(download.list[1].state, "done")
+  eq(#io.open(dir .. "/big.bin", "rb"):read("*a"), 320000)
+  -- Gemini, by its type; a second one is not given the first's name.
+  go(G .. "/file.zip")
+  eq(current().entry.url, page)
+  eq(io.open(dir .. "/file.zip", "rb"):read("*a"), "PK-not-really-a-zip")
+  go(G .. "/file.zip")
+  eq(io.open(dir .. "/file (2).zip", "rb"):read("*a"), "PK-not-really-a-zip")
+  -- A link to download goes through redirects, on its own.
+  ok(frm.downloadLink(G .. "/get"))
+  repeat for _, sv in ipairs(servers) do sv.step() end until not frm.poll()
+  eq(io.open(dir .. "/file (3).zip", "rb"):read("*a"), "PK-not-really-a-zip")
+  ok(not frm.downloadLink("https://example.com/x"), "only Gemini and Gopher")
+  -- Pages and pictures are still shown, not downloaded.
+  go(G .. "/pic.png")
+  ok(current().entry.pictures, "a picture is shown")
+  eq(#download.list, 4)
+  -- The window lists them, and its buttons do what they say.
+  local ran
+  dl.run = function(cmd) ran = cmd end
+  dl.open = dl.fill -- no window is shown in a test
+  frm.Menu1:fire("onClick", "mnuDownloads", "", nil)
+  eq(#dl.lstDownloads.items, 4)
+  ok(dl.lstDownloads.items[1]:find("big.bin    done", 1, true), dl.lstDownloads.items[1])
+  ok(dl.lblFolder.caption:find(dir, 1, true), dl.lblFolder.caption)
+  dl.lstDownloads.selected = 1
+  dl.lstDownloads:fire("onChange")
+  eq(dl.cmdOpen.enabled, true); eq(dl.cmdCancel.enabled, false); eq(dl.cmdRemove.enabled, true)
+  dl.cmdOpen:fire("onClick")
+  eq(ran[#ran], dir .. "/big.bin")
+  dl.cmdShow:fire("onClick")
+  eq(ran[#ran], dir)
+  dl.cmdRemove:fire("onClick")
+  eq(#download.list, 3); ok(require("lfs").attributes(dir .. "/big.bin"), "the file stays")
+  -- Cancel a download that is going on.
+  local waiting = hold()
+  servers[#servers + 1] = waiting
+  local HOLD = "gopher://127.0.0.1:" .. waiting.port .. "/9/x"
+  frm.downloadLink(HOLD)
+  repeat for _, sv in ipairs(servers) do sv.step() end frm.poll()
+  until download.active() > 0 and download.list[#download.list].received > 0
+  dl.fill()
+  dl.lstDownloads.selected = #download.list
+  dl.lstDownloads:fire("onChange")
+  eq(dl.cmdCancel.enabled, true); eq(dl.cmdOpen.enabled, false)
+  local name = download.list[#download.list].name
+  dl.cmdCancel:fire("onClick")
+  eq(download.list[#download.list].state, "stopped")
+  ok(not require("lfs").attributes(dir .. "/" .. name), "what came is taken away")
+  dl.cmdClear:fire("onClick")
+  eq(#download.list, 0)
+  -- The folder is kept in the settings.
+  local realDir = gui.choosedir
+  gui.choosedir = function() return root end
+  dl.cmdFolder:fire("onClick")
+  gui.choosedir = realDir
+  eq(s.downloadDir, root); eq(store.load().downloadDir, root)
+  -- Quitting asks when something is coming in.
+  frm.downloadLink(HOLD)
+  repeat for _, sv in ipairs(servers) do sv.step() end frm.poll()
+  until download.active() > 0 and download.list[#download.list].received > 0
+  answers = { "no" }
+  eq(frm:fire("onClose"), false)
+  eq(download.active(), 1)
+  answers = { "yes" }
+  frm:fire("onClose")
+  eq(download.active(), 0)
+  table.remove(servers)
+  s.downloadDir = ""
 end)
 
 t.done("microbrowser")

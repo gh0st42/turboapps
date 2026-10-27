@@ -1,0 +1,15 @@
+---@meta
+-- What Downloads.form.lua has in it, for a language server. Written by tlua
+-- design each time the form is saved; changing it here changes nothing.
+
+---@class forms.Downloads: gui.Form
+---@field cmdCancel gui.Button
+---@field cmdClear gui.Button
+---@field cmdClose gui.Button
+---@field cmdFolder gui.Button
+---@field cmdOpen gui.Button
+---@field cmdRemove gui.Button
+---@field cmdShow gui.Button
+---@field lblCount gui.Label
+---@field lblFolder gui.Label
+---@field lstDownloads gui.ListBox

@@ -12,7 +12,16 @@
 --   job.untrusted    true when trust() refused that certificate
 --   job.status       Gemini's two digits, as a number (Gopher: always 20)
 --   job.meta         Gemini's meta: the MIME type, a prompt, a new address
---   job.body         what came after the header
+--   job.body         what came after the header ("" when it was streamed)
+--   job.streamed     true when the body went to a sink as it came
+--   job.received     how many bytes of the body have come so far
+--
+-- opts.download(job) is asked once the answer's kind is known (Gemini: after
+-- its header, when the status is a success; Gopher: before anything is read,
+-- job.parsed.type being the item's type). It may give a sink, a function
+-- taking each piece of the body as it comes and returning true (or nil and
+-- why to stop), so that a big file goes to disk rather than into memory;
+-- a download has M.idle seconds between pieces, not M.timeout all told.
 --
 -- Addresses are read and written here too: parse, absolute, gopherURL.
 
@@ -24,6 +33,7 @@ local M = {}
 
 M.timeout = 20               -- seconds a request may take, all told
 M.maxBody = 32 * 1024 * 1024 -- bytes; a bigger answer is cut off
+M.idle = 30                  -- seconds a download may be quiet
 
 local PORTS = { gemini = 1965, gopher = 70 }
 
@@ -154,44 +164,124 @@ local function wait(job, fn)
   end
 end
 
-local function connect(job, u)
-  job.state = "connecting"
-  local tcp, err = socket.tcp()
-  if not tcp then return nil, err end
-  job.sock = tcp
-  tcp:settimeout(0)
-  local ok
-  ok, err = tcp:connect(u.host, u.port)
-  if not ok and err ~= "timeout" then return nil, err end
-  if not ok then
-    while true do
-      local _, writable = socket.select(nil, { tcp }, 0)
-      if writable and #writable > 0 then break end
-      if socket.gettime() > job.deadline then return nil, "it took too long" end
-      coroutine.yield()
-    end
-    -- A connection that failed is writable too: it has no peer.
-    if not tcp:getpeername() then return nil, "connection refused" end
+-- interleave puts the addresses a name has in the order to try them: the
+-- first, then one of the other family, and so on, so that an address that
+-- leads nowhere (a name with an IPv6 address on a network without IPv6) is
+-- not all there is. list is what socket.dns.getaddrinfo gives.
+function M.interleave(list)
+  local by, order = {}, {}
+  for _, a in ipairs(list) do
+    if not by[a.family] then by[a.family] = {} order[#order + 1] = a.family end
+    local q = by[a.family]
+    q[#q + 1] = a
   end
-  return tcp
+  local out, at = {}, 1
+  while #out < #list do
+    for _, fam in ipairs(order) do
+      local a = by[fam][at]
+      if a then out[#out + 1] = a end
+    end
+    at = at + 1
+  end
+  return out
 end
 
--- readAll reads until the other end closes.
-local function readAll(job, conn)
+M.stagger = 0.25 -- seconds before the next address is tried alongside
+
+-- connect opens a connection to the host, as a browser does: the addresses
+-- of the name are tried one after the other, the next while the one before
+-- is still trying after a quarter of a second, and the first to answer
+-- is kept.
+local function connect(job, u)
+  job.state = "connecting"
+  local list, err = socket.dns.getaddrinfo(u.host)
+  if not list or #list == 0 then return nil, err or ("cannot find " .. u.host) end
+  local candidates = M.interleave(list)
+  local trying, nextAt, lastErr, launched = {}, 1, nil, 0
+  local function close(t)
+    pcall(function() t:close() end)
+  end
+  local function launch()
+    local a = candidates[nextAt]
+    nextAt = nextAt + 1
+    local tcp, cerr = (a.family == "inet6" and socket.tcp6 or socket.tcp4)()
+    if not tcp then lastErr = cerr return nil end
+    tcp:settimeout(0)
+    local ok
+    ok, cerr = tcp:connect(a.addr, u.port)
+    launched = socket.gettime()
+    if ok then return tcp end
+    if cerr ~= "timeout" then
+      lastErr = cerr
+      close(tcp)
+      return nil
+    end
+    trying[#trying + 1] = tcp
+  end
+  local function won(tcp)
+    for _, t in ipairs(trying) do if t ~= tcp then close(t) end end
+    job.sock = tcp
+    return tcp
+  end
+  while true do
+    -- The next address is tried when the one before is slow, or failed.
+    if nextAt <= #candidates and (#trying == 0 or socket.gettime() - launched >= M.stagger) then
+      local tcp = launch()
+      if tcp then return won(tcp) end
+    end
+    if #trying > 0 then
+      local _, writable = socket.select(nil, trying, 0)
+      for _, t in ipairs(writable or {}) do
+        -- A connection that failed is writable too: it has no peer.
+        if t:getpeername() then return won(t) end
+        close(t)
+        lastErr = "connection refused"
+        for i, x in ipairs(trying) do if x == t then table.remove(trying, i) break end end
+      end
+    end
+    if #trying == 0 and nextAt > #candidates then return nil, lastErr or "connection refused" end
+    if socket.gettime() > job.deadline then
+      for _, t in ipairs(trying) do close(t) end
+      return nil, "it took too long"
+    end
+    coroutine.yield()
+  end
+end
+
+-- pump reads until the other end closes, starting with first (what has come
+-- already). The body is collected and returned, or, with a sink, given to it
+-- piece by piece and "" returned.
+local function pump(job, conn, first, sink)
   job.state = "receiving"
   local parts, size = {}, 0
+  local function take(got)
+    if sink then
+      local ok, why = sink(got)
+      if not ok then return nil, why or "the file could not be written" end
+      job.received = job.received + #got
+      job.deadline = socket.gettime() + M.idle
+    else
+      parts[#parts + 1] = got
+      size = size + #got
+      job.received = size
+    end
+    return true
+  end
+  if first ~= "" then
+    local ok, why = take(first)
+    if not ok then return nil, why end
+  end
   while true do
     local data, err, partial = conn:receive(65536)
     local got = data or partial
     if got and got ~= "" then
-      parts[#parts + 1] = got
-      size = size + #got
-      job.received = size
-      if size > M.maxBody then break end
+      local ok, why = take(got)
+      if not ok then return nil, why end
+      if not sink and size > M.maxBody then break end
     end
     if err == "closed" then break end
     if err and err ~= "timeout" and err ~= "wantread" then
-      if size == 0 then return nil, err end
+      if job.received == 0 and #first == 0 then return nil, err end
       break
     end
     if not data then
@@ -200,6 +290,33 @@ local function readAll(job, conn)
     end
   end
   return table.concat(parts)
+end
+
+-- readHeader reads a Gemini answer's first line, and gives it and what came
+-- after it in the same piece.
+local function readHeader(job, conn)
+  job.state = "receiving"
+  local buf = ""
+  while true do
+    local nl = buf:find("\n", 1, true)
+    if nl then return (buf:sub(1, nl - 1):gsub("\r$", "")), buf:sub(nl + 1) end
+    if #buf > 4096 then return nil, "not a Gemini answer: " .. buf:sub(1, 80) end
+    local data, err, partial = conn:receive(1024)
+    local got = data or partial
+    if got and got ~= "" then buf = buf .. got end
+    local ended = err == "closed" or (err and err ~= "timeout" and err ~= "wantread")
+    if ended then
+      -- The other end is done: what came is all there is.
+      local nl = buf:find("\n", 1, true)
+      if nl then return (buf:sub(1, nl - 1):gsub("\r$", "")), buf:sub(nl + 1) end
+      if buf == "" and err ~= "closed" then return nil, err end
+      return (buf:gsub("\r$", "")), ""
+    end
+    if not data then
+      if socket.gettime() > job.deadline then return nil, "it took too long" end
+      coroutine.yield()
+    end
+  end
 end
 
 local function sendAll(job, conn, text)
@@ -237,27 +354,32 @@ local function gemini(job, u, opts)
   end
   ok, err = sendAll(job, conn, u.url .. "\r\n")
   if not ok then return nil, err end
-  local all
-  all, err = readAll(job, conn)
-  if not all then return nil, err end
-  local header, body = all:match("^([^\n]*)\n(.*)$")
-  if not header then header, body = all, "" end
-  header = header:gsub("\r$", "")
+  local header, first = readHeader(job, conn)
+  if not header then return nil, first end
   local status, meta = header:match("^(%d%d)%s*(.*)$")
   if not status then return nil, "not a Gemini answer: " .. header:sub(1, 80) end
-  job.status, job.meta, job.body = tonumber(status), meta, body
+  job.status, job.meta = tonumber(status), meta
+  local sink
+  if job.status >= 20 and job.status < 30 and opts.download then sink = opts.download(job) end
+  job.streamed = sink ~= nil
+  local rest
+  rest, err = pump(job, conn, first, sink)
+  if not rest then return nil, err end
+  job.body = sink and "" or rest
   return true
 end
 
-local function gopher(job, u)
+local function gopher(job, u, opts)
   local tcp, err = connect(job, u)
   if not tcp then return nil, err end
   local line = u.selector .. (u.search and "\t" .. u.search or "") .. "\r\n"
   local ok
   ok, err = sendAll(job, tcp, line)
   if not ok then return nil, err end
+  local sink = opts.download and opts.download(job)
+  job.streamed = sink ~= nil
   local body
-  body, err = readAll(job, tcp)
+  body, err = pump(job, tcp, "", sink)
   if not body then return nil, err end
   job.status, job.meta, job.body = 20, "", body
   return true
@@ -279,7 +401,7 @@ function M.request(address, opts)
   job.parsed = u
   job.co = coroutine.create(function()
     if u.scheme == "gemini" then return gemini(job, u, opts) end
-    return gopher(job, u)
+    return gopher(job, u, opts)
   end)
   return job
 end

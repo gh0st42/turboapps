@@ -16,7 +16,7 @@ function M.path()
   return (base or (home .. "/.config")) .. "/turboapps/microbrowser.lua"
 end
 
-local DEFAULTS = { textSize = 15, home = "about:home", mono = false, terminal = false, outline = false }
+local DEFAULTS = { textSize = 15, home = "about:home", mono = false, terminal = false, outline = false, downloadDir = "" }
 
 -- load reads the settings, filling in what they do not have.
 function M.load()
@@ -94,7 +94,7 @@ function M.save(s)
     lfs.mkdir(dir)
   end
   local out = { "-- microbrowser's settings, written by it.\nreturn " }
-  write({ textSize = s.textSize, home = s.home, mono = s.mono, terminal = s.terminal, outline = s.outline,
+  write({ textSize = s.textSize, home = s.home, mono = s.mono, terminal = s.terminal, outline = s.outline, downloadDir = s.downloadDir,
     bookmarks = s.bookmarks, known = s.known, tabs = s.tabs, history = s.history }, "", out)
   out[#out + 1] = "\n"
   local f = io.open(path, "w")
