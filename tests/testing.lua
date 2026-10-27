@@ -3,6 +3,17 @@
 
 local M = { passed = 0, failed = 0 }
 
+-- The clipboard is a variable of the tests' own: the system's needs a
+-- window, and asking for it on a machine with no screen (a CI runner)
+-- crashes; it would also change what is on a person's clipboard.
+local ok, gui = pcall(require, "gui")
+if ok and type(gui) == "table" and gui.clipboard then
+  local held = ""
+  gui.clipboard = function(text)
+    if text ~= nil then held = text else return held end
+  end
+end
+
 function M.eq(got, want, what)
   if got ~= want then
     error(("%s: got %s, want %s"):format(what or "value", ("%q"):format(tostring(got)), ("%q"):format(tostring(want))), 2)
