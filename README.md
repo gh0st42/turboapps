@@ -30,23 +30,25 @@ make run-editor ARGS=notes.txt
 tlua dist/editor.ztl notes.txt
 ```
 
-The apps need tlua 0.5.3 or later, built with the GUI (`make build` in
-tlua; `make static` has no GUI). Microword, micronotes and microreader need
-0.6.1 or later, whose MarkdownEdit edits Markdown as it looks and goes to its
-headings, whose MarkdownView takes pictures from the program, and whose drops
-on a Tree say where they landed. Passwords on documents, workbooks and notebooks, and the archive window of files, need tlua 0.9.3: 0.9.2 has the zip encryption, 0.9.3 the `gui.passwordbox` that asks for the password with dots shown. Find and replace in microword and micronotes, the browser's find bar, and the image viewer's turning and flipping need the tlua after 0.9.4: the editor's `find` and `replace`, a MarkdownView's `search(text, back)` and `matches`, and a png image's `rotate` and `flip`. Editing a table's cells in microword and micronotes needs tlua 0.9.1 or later (`insertTable` and the cell editing of MarkdownEdit); reading tables, in microreader and micronotes' Read view, works with any 0.6.1 or later. Microsheets saves charts as PNG with
-`canvas:snapshot`. Microbrowser needs 0.6.3 or later, whose TLS reads
-what has come without waiting, whose coroutines outlive the chunk that
-made them, and whose MarkdownView draws in any installed font and in
-colours of the program's. ChipStudio needs 0.7.1 or later:
-its `beepbox` module renders BeepBox songs with fz's synthesiser, its
-`audio` module plays them, and a form's `onKeyPreview` lets Space play and
-stop whatever has the focus. Pixel uses the `png` module and sharp scaling, and files
-its context menus; its hand tool moves a Scroll with `scrollX` and `scrollY`, which
-come with 0.7.2. The image viewer needs 0.8.2 or later: 0.8.1 has the `png.frames` that gives it
-animated GIF, APNG and WebP (and `png.load` reads WebP), 0.8.2 the `gui.colors` that
-makes it dark, and 0.8.3 the `fullscreen` of a Form that shows a picture on the whole screen. The Makefile uses `../tlua/bin/tlua` when it has been built,
-and `tlua` on PATH otherwise. `make TLUA=/path/to/tlua` picks another.
+The apps are built, tested and released with **tlua 0.9.6**, the release named
+in `.tlua-version`, and that is the one to use. It must be built with the GUI
+(`make build` in tlua; the static builds have no GUI). The Makefile uses
+`../tlua/bin/tlua` when it has been built, and `tlua` on PATH otherwise;
+`make TLUA=/path/to/tlua` picks another.
+
+Older releases run some of the apps. The oldest each needs, and why:
+
+| App | tlua | What it needs |
+|-----|------|---------------|
+| calculator, editor, desktop | 0.5.3 | the `gui` module |
+| microreader | 0.9.3 | encrypted books (`zip` passwords, `gui.passwordbox`) |
+| microsheets | 0.9.3 | encrypted workbooks |
+| files | 0.9.3 | zip files, with passwords |
+| microword, micronotes | 0.9.5 | find and replace, and tables edited in place (0.9.1), in MarkdownEdit; encrypted files (0.9.3) |
+| microbrowser | 0.9.5 | MarkdownView's `search` and `matches` for the find bar; TLS reads that do not wait (0.6.3) |
+| imageviewer | 0.9.5 | turning and flipping (`rotate`, `flip`); animated pictures (0.8.1), `gui.colors` (0.8.2), `Form.fullscreen` (0.8.3) |
+| pixel | 0.7.2 | `scrollX` and `scrollY` for the hand tool |
+| chipstudio | 0.7.1 | `beepbox` and `audio`, and `onKeyPreview` |
 
 A `.ztl` is the app's folder zipped by `tlua bundle`, with `main.lua` at the
 root. `tlua fuse -o calculator apps/calculator` makes a standalone executable
