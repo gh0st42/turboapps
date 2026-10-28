@@ -60,6 +60,10 @@ Pushing a tag such as `v0.2.0` makes a GitHub release (`.github/workflows/releas
 the source, every app as a `.ztl` (and all of them in a zip), and every app as a
 native program, one archive each for Linux amd64 and arm64, macOS arm64 and
 Windows amd64, each program fused onto that platform's tlua (`tlua fuse --base`).
+The zip of `.ztl` bundles also has `fuse-all.lua`, for those who would rather make
+the native programs themselves, with the tlua they have: `tlua fuse-all.lua` asks
+and then fuses every bundle beside it (`-y` to skip the question, app names to make
+only those, `-o folder`, `--list`).
 The macOS programs are not signed (`xattr -dr com.apple.quarantine .` if one is
 refused), and Windows ones open a console window beside the app. The tlua they are
 built on is the release named in `.tlua-version`: change it, and nothing else, to

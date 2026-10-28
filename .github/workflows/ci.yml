@@ -36,6 +36,15 @@ jobs:
       - uses: ./.github/actions/tlua
       - name: Pack
         run: scripts/package.sh 0.0.0-ci
+      - name: fuse-all.lua, from the zip of bundles
+        run: |
+          mkdir fuse-test && cd fuse-test
+          unzip -q ../release/turboapps-0.0.0-ci-ztl.zip
+          ls fuse-all.lua calculator.ztl
+          tlua fuse-all.lua --list | grep -x calculator
+          tlua fuse-all.lua -y -o programs calculator pixel
+          test -x programs/calculator && test -x programs/pixel
+          ! tlua fuse-all.lua -y nosuchapp
       - name: A fused program starts
         run: |
           tar xzf release/turboapps-0.0.0-ci-linux-amd64.tar.gz

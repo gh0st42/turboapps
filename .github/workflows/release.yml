@@ -54,6 +54,7 @@ jobs:
           case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
           cat > notes.md <<NOTES
           Apps for tlua $tlua. Run a native program (Linux, macOS, Windows) or a \`.ztl\` with \`tlua app.ztl\`.
+          The zip of \`.ztl\` bundles has \`fuse-all.lua\`: \`tlua fuse-all.lua\` makes native programs of them with your own tlua.
           The macOS programs are not signed: \`xattr -dr com.apple.quarantine .\` once, if they are refused.
           Windows programs open a console window beside the app.
           NOTES

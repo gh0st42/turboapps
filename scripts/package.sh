@@ -2,7 +2,8 @@
 # Packs a release of turboapps into release/, from the apps in apps/:
 #
 #   turboapps-VERSION-source.tar.gz and .zip        the source, as git has it
-#   <app>.ztl, turboapps-VERSION-ztl.zip            the bundles any tlua runs
+#   <app>.ztl, turboapps-VERSION-ztl.zip            the bundles any tlua runs (the zip
+#                                                   with fuse-all.lua, to make programs of them)
 #   turboapps-VERSION-linux-amd64.tar.gz            native programs: each app
 #   turboapps-VERSION-linux-arm64.tar.gz            fused onto the tlua of that
 #   turboapps-VERSION-darwin-arm64.tar.gz           platform (tlua fuse --base),
@@ -47,7 +48,10 @@ for a in "${apps[@]}"; do
   "$tlua" bundle -o "dist/$a.ztl" "apps/$a"
   cp "dist/$a.ztl" "$out/$a.ztl"
 done
-(cd dist && zip -q -j "../$out/turboapps-$version-ztl.zip" "${apps[@]/%/.ztl}")
+# The zip of bundles has a script that makes native programs of them, for
+# whoever wants them: tlua fuse-all.lua.
+cp scripts/fuse-all.lua dist/fuse-all.lua
+(cd dist && zip -q -j "../$out/turboapps-$version-ztl.zip" "${apps[@]/%/.ztl}" fuse-all.lua)
 
 # Source.
 if git rev-parse --git-dir >/dev/null 2>&1; then

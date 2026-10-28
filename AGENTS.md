@@ -63,7 +63,9 @@ windows-amd64 (best effort). The programs are made on one Linux runner by
 `tlua fuse --base`, on the tlua release named in `.tlua-version`, taken from
 github.com/gh0st42/tlua and checked against its SHA256SUMS. When an app needs
 a newer tlua, raise `.tlua-version` in the same commit and say so in the
-README's note on versions. A tag is not pushed without being asked.
+README's note on versions. scripts/fuse-all.lua goes into the zip of `.ztl` bundles for people who want
+the native programs made with their own tlua; CI runs it from that zip.
+A tag is not pushed without being asked.
 
 ## Building and testing
 
